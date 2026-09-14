@@ -912,14 +912,13 @@ else:
                         mg = merged_geo[merged_geo['nama_kabupaten'] == selected_wilayah].copy()
                     else:
                         mg = merged_geo.copy()
-                    
                     if not mg.empty:
-                     if selected_wilayah != "Semua Wilayah":
+                    if selected_wilayah != "Semua Wilayah":
     fitbounds = "locations"
 else:
     fitbounds = None
-                        
-                        fig = px.choropleth_map(
+
+fig = px.choropleth_map(
     mg,
     geojson=json.loads(mg.to_json()),
     locations=mg.index,
