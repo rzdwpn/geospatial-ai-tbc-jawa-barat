@@ -1,1 +1,7 @@
-
+streamlit
+geopandas
+pandas
+numpy
+plotly
+joblib
+shap
