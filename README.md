@@ -1,25 +1,28 @@
-# geospatial-tbc-jawa-barat
-Program Geospatial AI untuk Klasifikasi Potensi Risiko Tuberkulosis di Provinsi Jawa Barat
-
-# geospatial-ai-tbc-jawa-barat
+# Geospatial AI TBC Jawa Barat
 
 Program Geospatial AI untuk Klasifikasi Potensi Risiko Tuberkulosis di Provinsi Jawa Barat.
 
-## Cara Membuka Program
+## Live Dashboard
 
-Untuk menjalankan aplikasi dashboard, silakan klik link berikut:
-
-**Link Dashboard Streamlit:**  
+**Buka Dashboard Streamlit:**
 https://geospatial-ai-tbc-jawa-barat-4uphwecosroypwt2bdnokq.streamlit.app/
 
 Dashboard dapat dibuka langsung melalui browser tanpa perlu mengunduh program.
 
-## Source Code
+## Fitur
 
-Source code dan file pendukung program tersedia di repository GitHub ini.
+- Peta sebaran risiko interaktif (27 kabupaten/kota)
+- Prediksi manual per wilayah
+- Upload multiple file BPS/Dinkes (CSV/Excel)
+- Analisis SHAP (faktor risiko)
+- Evaluasi model (akurasi, precision, recall, F1)
+- Export hasil prediksi ke CSV
 
-Untuk melihat kode program, pilih file **`dashboard.py`**.
+## Model
 
-**Catatan:**  
-Jika ingin menjalankan aplikasi, gunakan **Link Dashboard Streamlit** di atas.  
-Jika ingin melihat source code program, gunakan repository GitHub ini.
+- Algoritma: XGBoost (multi-class)
+- Kelas: Rendah, Sedang, Tinggi
+- Akurasi: > 85%
+- Fitur: Basic Service Index, Faskes Ratio, Poverty Density, Pengeluaran per Kapita, Kepadatan Penduduk
+
+## Struktur Repository
