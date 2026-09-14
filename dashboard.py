@@ -524,58 +524,95 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif !important; }
 .panel-card .title { font-size: 0.85rem; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-1); margin: 0; }
 .panel-card .sub { font-size: 0.65rem; color: var(--text-3); margin-left: auto; font-style: italic; }
 
-/* ===== INPUT & SELECT DARK THEME ===== */
-div[data-testid="stTextInput"] div[data-baseweb="input"],
-div[data-testid="stNumberInput"] div[data-baseweb="input"] {
-    background-color: #101828 !important;
-    border: 1px solid rgba(255,255,255,0.09) !important;
-    border-radius: 10px !important;
-}
+/* ===== INPUT DARK THEME (FORCE - NUCLEAR) ===== */
 div[data-testid="stTextInput"] input,
-div[data-testid="stNumberInput"] input {
-    background-color: transparent !important;
+div[data-testid="stNumberInput"] input,
+div[data-testid="stTextInput"] div[data-baseweb="base-input"],
+div[data-testid="stNumberInput"] div[data-baseweb="base-input"],
+div[data-testid="stTextInput"] div[data-baseweb="input"],
+div[data-testid="stNumberInput"] div[data-baseweb="input"],
+div[data-baseweb="base-input"],
+div[data-baseweb="input"],
+.stApp input,
+.stApp input:focus,
+.stApp input:hover,
+.stApp input:active,
+.stApp input[type="text"],
+.stApp input[type="number"] {
+    background-color: #101828 !important;
+    background: #101828 !important;
     color: #f0f4ff !important;
-    border: none !important;
     -webkit-text-fill-color: #f0f4ff !important;
+    caret-color: #e8445a !important;
+    border-color: rgba(255,255,255,0.09) !important;
+    box-shadow: none !important;
+}
+input::placeholder,
+div[data-baseweb="base-input"] input::placeholder,
+.stApp input::placeholder {
+    color: #4e6180 !important;
+    -webkit-text-fill-color: #4e6180 !important;
+    opacity: 1 !important;
+}
+.stApp div[data-baseweb="input"] > div,
+.stApp div[data-baseweb="base-input"] > div {
+    background-color: #101828 !important;
+    background: #101828 !important;
+    border-color: rgba(255,255,255,0.09) !important;
+}
+.stApp div[data-baseweb="input"]:focus-within,
+.stApp div[data-baseweb="base-input"]:focus-within {
+    border-color: #e8445a !important;
+    box-shadow: 0 0 0 1px #e8445a !important;
 }
 div[data-testid="stNumberInput"] button {
-    background-color: #101828 !important;
+    background-color: #162032 !important;
     color: #f0f4ff !important;
     border: none !important;
 }
 div[data-testid="stNumberInput"] button:hover {
-    background-color: #162032 !important;
+    background-color: #1e2a42 !important;
 }
-div[data-testid="stNumberInput"] button svg {
+div[data-testid="stNumberInput"] button svg,
+div[data-testid="stNumberInput"] button svg * {
     fill: #f0f4ff !important;
+    color: #f0f4ff !important;
 }
-.stNumberInput label, .stTextInput label {
+.stNumberInput label, .stTextInput label,
+div[data-testid="stNumberInput"] label,
+div[data-testid="stTextInput"] label {
     font-size: 0.72rem !important;
     color: #94a3b8 !important;
     font-weight: 500 !important;
 }
 
-/* Selectbox */
+/* ===== SELECTBOX ===== */
 div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
     background-color: #101828 !important;
     border: 1px solid rgba(255,255,255,0.09) !important;
     color: #f0f4ff !important;
     border-radius: 10px !important;
 }
-div[data-testid="stSelectbox"] div[data-baseweb="select"] span {
+div[data-testid="stSelectbox"] div[data-baseweb="select"] span,
+div[data-testid="stSelectbox"] div[data-baseweb="select"] div {
     color: #f0f4ff !important;
+}
+div[data-testid="stSelectbox"] svg {
+    fill: #94a3b8 !important;
+    color: #94a3b8 !important;
 }
 div[data-baseweb="popover"] ul {
     background-color: #101828 !important;
 }
 div[data-baseweb="popover"] li {
     color: #f0f4ff !important;
+    background-color: #101828 !important;
 }
 div[data-baseweb="popover"] li:hover {
     background-color: #162032 !important;
 }
 
-/* ===== FILE UPLOADER DARK THEME ===== */
+/* ===== FILE UPLOADER ===== */
 div[data-testid="stFileUploader"] section,
 div[data-testid="stFileUploaderDropzone"],
 section[data-testid="stFileUploaderDropzone"] {
@@ -594,7 +631,6 @@ section[data-testid="stFileUploaderDropzone"] button {
     font-weight: 600 !important;
 }
 div[data-testid="stFileUploader"] section button:hover,
-div[data-testid="stFileUploaderDropzone"] button:hover,
 section[data-testid="stFileUploaderDropzone"] button:hover {
     opacity: 0.9 !important;
     background-color: #e8445a !important;
@@ -602,9 +638,9 @@ section[data-testid="stFileUploaderDropzone"] button:hover {
 div[data-testid="stFileUploader"] section small,
 div[data-testid="stFileUploader"] section span,
 div[data-testid="stFileUploader"] section div,
-div[data-testid="stFileUploaderDropzone"] small,
-div[data-testid="stFileUploaderDropzone"] span,
-div[data-testid="stFileUploaderDropzone"] div {
+section[data-testid="stFileUploaderDropzone"] small,
+section[data-testid="stFileUploaderDropzone"] span,
+section[data-testid="stFileUploaderDropzone"] div {
     color: #94a3b8 !important;
 }
 div[data-testid="stFileUploader"] svg {
@@ -614,7 +650,6 @@ div[data-testid="stFileUploader"] svg {
 div[data-testid="stFileUploader"] [data-testid="stFileUploaderFileName"] {
     color: #f0f4ff !important;
 }
-/* file list item */
 div[data-testid="stFileUploader"] ul li,
 div[data-testid="stFileUploader"] ol li {
     color: #f0f4ff !important;
@@ -623,22 +658,22 @@ div[data-testid="stFileUploader"] ol li {
     padding: 6px 10px !important;
 }
 
-/* Radio button */
+/* ===== RADIO ===== */
 .stRadio > div { gap: 12px !important; background: var(--bg-surface); padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border-dim); margin-top: 8px; }
 .stRadio label, .stRadio label p, .stRadio div[role="radiogroup"] label { font-size: 0.85rem !important; font-weight: 500 !important; color: #f0f4ff !important; }
 .stRadio [data-baseweb="radio"]:checked + div { border-color: var(--accent) !important; background: var(--accent-dim); }
 
-/* Form submit */
+/* ===== FORM SUBMIT ===== */
 div[data-testid="stForm"] .stFormSubmitButton button {
     background: var(--accent) !important; color: #fff !important; border: none !important;
     border-radius: 12px !important; font-weight: 600 !important;
     box-shadow: 0 4px 20px var(--accent-glow) !important;
 }
 
-/* Alert */
+/* ===== ALERT ===== */
 .stAlert { border-radius: 12px !important; font-size: 0.78rem !important; }
 
-/* Metric */
+/* ===== METRIC ===== */
 div[data-testid="stMetric"] {
     background-color: #101828 !important;
     padding: 12px 16px !important;
@@ -649,7 +684,7 @@ div[data-testid="stMetric"] label, div[data-testid="stMetric"] div {
     color: #f0f4ff !important;
 }
 
-/* Misc */
+/* ===== MISC ===== */
 .stPlotlyChart { border-radius: 14px; overflow: hidden; }
 .footer { text-align: center; font-size: 0.58rem; color: var(--text-3); padding: 14px 0 10px; border-top: 1px solid var(--border-dim); margin-top: 16px; letter-spacing: 0.5px; }
 ::-webkit-scrollbar { width: 4px; }
