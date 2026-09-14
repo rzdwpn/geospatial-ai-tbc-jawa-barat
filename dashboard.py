@@ -914,42 +914,32 @@ else:
                         mg = merged_geo.copy()
                     
                     if not mg.empty:
-                        if selected_wilayah != "Semua Wilayah":
-                            lat = mg.geometry.centroid.y.iloc[0]
-                            lon = mg.geometry.centroid.x.iloc[0]
-                            zoom = 9
-                        else:
-                            lat, lon, zoom = -6.9, 107.6, 7
+                     if selected_wilayah != "Semua Wilayah":
+    fitbounds = "locations"
+else:
+    fitbounds = None
                         
                         fig = px.choropleth_map(
-                            mg,
-                            geojson=json.loads(mg.to_json()),
-                            locations=mg.index,
-                            color='Prediksi_Kategori',
-                            color_discrete_map={'Tinggi':'#ef4444','Sedang':'#f5a623','Rendah':'#22d47a'},
-                            map_style="carto-darkmatter",
-                            center={"lat": lat, "lon": lon},
-                            zoom=zoom,
-                            opacity=0.8,
-                            hover_name='nama_kabupaten',
-                            hover_data={}
-                        )
+    mg,
+    geojson=json.loads(mg.to_json()),
+    locations=mg.index,
+    color='Prediksi_Kategori',
+    color_discrete_map={
+        'Tinggi':'#ef4444',
+        'Sedang':'#f5a623',
+        'Rendah':'#22d47a'
+    },
+    map_style="carto-darkmatter",
+    fitbounds=fitbounds,
+    opacity=0.8,
+    hover_name='nama_kabupaten',
+    hover_data={}
+)
                         fig.update_traces(
                             hovertemplate='<b>%{hovertext}</b><extra></extra>',
                             marker_line_width=0.6,
                             marker_line_color="rgba(255,255,255,0.15)"
                         )
-                        if selected_wilayah != "Semua Wilayah":
-                            go.Choroplethmap(
-                                geojson=json.loads(mg.to_json()),
-                                locations=mg.index,
-                                z=[0]*len(mg),
-                                colorscale=[[0,"rgba(0,0,0,0)"],[1,"rgba(0,0,0,0)"]],
-                                marker_line_width=3,
-                                marker_line_color="#ffffff",
-                                showscale=False,
-                                hoverinfo="skip"
-                            )
                         fig.update_layout(
                             height=500,
                             margin=dict(l=0,r=0,t=0,b=0),
