@@ -109,7 +109,6 @@ def compute_features(row):
            row['persentase_rumah_layak_huni']) / 3.0
     penduduk = row['jumlah_penduduk']
     faskes = row['jumlah_faskes']
-    # Deteksi otomatis satuan: angka penuh (jiwa) vs ribuan (orang)
     AMBANG_ANGKA_PENUH = 20000
     penduduk_ribuan = penduduk / 1000.0 if penduduk > AMBANG_ANGKA_PENUH else penduduk
     if penduduk_ribuan > 0 and faskes > 0:
@@ -161,7 +160,6 @@ def get_shap_values(input_dict, pred_class=2):
     if isinstance(shap_values, list):
         sv_class = shap_values[pred_class][0]
     else:
-        # XGBoost multi-class: shape (n_samples, n_features, n_classes)
         if shap_values.ndim == 3:
             sv_class = shap_values[0, :, pred_class]
         else:
@@ -217,7 +215,6 @@ def process_single_file(file, filename):
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
     df = df.dropna(how='all')
 
-    # Kasus 2 kolom
     if len(df.columns) == 2:
         col0, col1 = df.columns[0], df.columns[1]
         if 'kabupaten' in col0 or 'kota' in col0 or 'wilayah' in col0:
@@ -252,7 +249,6 @@ def process_single_file(file, filename):
             result = result.dropna(subset=[indikator])
             return result.drop_duplicates(subset=['kode_kabupaten_kota', 'tahun'])
 
-    # Kasus file faskes
     if 'jenis_faskes' in df.columns and 'jumlah_faskes' in df.columns:
         kode_col = None
         for c in ['kode_kabupaten_kota', 'kode_kabupaten']:
@@ -284,7 +280,6 @@ def process_single_file(file, filename):
         df_agg['kode_kabupaten_kota'] = df_agg['kode_kabupaten_kota'].astype(str).str.extract(r'(\d{4})')[0]
         return df_agg
 
-    # Fallback
     kode_col = None
     for c in ['kode_kabupaten_kota', 'kode_kabupaten']:
         if c in df.columns:
@@ -405,7 +400,6 @@ def merge_and_preprocess(uploaded_files):
         merged['tahun'] = pd.to_numeric(merged['tahun'], errors='coerce')
         merged = merged.sort_values(['kode_kabupaten_kota', 'tahun'], ascending=[True, False])
 
-    # Deduplikasi
     group_keys = ['kode_kabupaten_kota', 'tahun']
     num_cols = [c for c in merged.select_dtypes(include=np.number).columns if c not in group_keys]
     if all(k in merged.columns for k in group_keys):
@@ -586,15 +580,17 @@ if mode == "Mode Prediksi Manual":
     with col_left:
         st.markdown('<div class="panel-card"><div class="title">📝 Input Data Wilayah (Mentah)</div></div>', unsafe_allow_html=True)
 
+        # ===== FIX: selectbox di LUAR form, biar tiap ganti wilayah langsung rerun =====
+        selected_wilayah_manual = st.selectbox(
+            "🗺️ Wilayah yang Diwakili Data Ini",
+            sorted(NAMA_TO_KODE.keys()),
+            key="manual_wilayah_select",
+            help="Pilih kabupaten/kota yang datanya kamu masukkan di bawah. "
+                 "Ini dipakai untuk menampilkan lokasinya di peta setelah prediksi, "
+                 "TIDAK mempengaruhi hasil perhitungan."
+        )
+
         with st.form(key="manual_form"):
-            selected_wilayah_manual = st.selectbox(
-                "🗺️ Wilayah yang Diwakili Data Ini",
-                sorted(NAMA_TO_KODE.keys()),
-                key="manual_wilayah_select",
-                help="Pilih kabupaten/kota yang datanya kamu masukkan di bawah. "
-                     "Ini dipakai untuk menampilkan lokasinya di peta setelah prediksi, "
-                     "TIDAK mempengaruhi hasil perhitungan."
-            )
             col1, col2 = st.columns(2)
             with col1:
                 jumlah_penduduk_str = st.text_input(
@@ -693,17 +689,19 @@ if mode == "Mode Prediksi Manual":
             """, unsafe_allow_html=True)
 
             # ======================== PETA WILAYAH TERPILIH ========================
-            if st.session_state.manual_wilayah is not None:
+            # FIX: pakai selected_wilayah_manual (live) bukan session_state
+            if selected_wilayah_manual is not None:
                 st.markdown('<div class="panel-card"><div class="title">🗺️ Lokasi di Peta</div><div class="sub">Berdasarkan wilayah yang dipilih</div></div>', unsafe_allow_html=True)
                 gdf_geo_manual = load_geojson()
                 if gdf_geo_manual is not None:
-                    kode_terpilih = NAMA_TO_KODE.get(st.session_state.manual_wilayah)
+                    kode_terpilih = NAMA_TO_KODE.get(selected_wilayah_manual)
                     gdf_geo_manual['kode_wilayah'] = gdf_geo_manual['kode_wilayah'].astype(str)
                     mg_manual = gdf_geo_manual[gdf_geo_manual['kode_wilayah'] == str(kode_terpilih)].copy()
+                    # FIX KRITIS: reset_index supaya locations=mg.index match dgn geojson feature index (mulai 0)
+                    mg_manual = mg_manual.reset_index(drop=True)
                     if not mg_manual.empty:
                         mg_manual['Kategori'] = kat
-                        mg_manual['Nama'] = st.session_state.manual_wilayah
-                        # Gunakan CRS terproyeksi untuk centroid agar tidak ada warning
+                        mg_manual['Nama'] = selected_wilayah_manual
                         try:
                             mg_proj = mg_manual.to_crs(epsg=3857)
                             centroid = mg_proj.geometry.centroid.to_crs(epsg=4326)
@@ -735,11 +733,12 @@ if mode == "Mode Prediksi Manual":
                             height=170,
                             margin=dict(l=0, r=0, t=0, b=0),
                             paper_bgcolor="rgba(0,0,0,0)",
-                            showlegend=False
+                            showlegend=False,
+                            uirevision=f"manual_map_{selected_wilayah_manual}"
                         )
                         st.plotly_chart(fig_manual, use_container_width=True)
                     else:
-                        st.info(f"ℹ️ Bentuk wilayah '{st.session_state.manual_wilayah}' tidak ditemukan di GeoJSON.")
+                        st.info(f"ℹ️ Bentuk wilayah '{selected_wilayah_manual}' tidak ditemukan di GeoJSON.")
                 else:
                     st.info("ℹ️ File GeoJSON tidak tersedia — peta tidak bisa ditampilkan.")
 
@@ -823,19 +822,18 @@ else:
                 tahun_terbaru = None
                 df_display = df_final.copy()
 
+            # ===== FIX: sidebar selectbox tanpa key yg nutupin session_state lama =====
             with st.sidebar:
                 if not df_display.empty:
                     wilayah_list = ["Semua Wilayah"] + sorted(df_display['nama_kabupaten'].unique())
-                    default_idx = 0
-                    if st.session_state.batch_selected_kab in wilayah_list:
-                        default_idx = wilayah_list.index(st.session_state.batch_selected_kab)
+                    # pastikan session_state value masih valid
+                    if st.session_state.batch_selected_kab not in wilayah_list:
+                        st.session_state.batch_selected_kab = "Semua Wilayah"
                     selected_wilayah = st.selectbox(
                         "Filter Wilayah",
                         wilayah_list,
-                        index=default_idx,
-                        key="batch_filter_wilayah"
+                        key="batch_selected_kab"
                     )
-                    st.session_state.batch_selected_kab = selected_wilayah
                 else:
                     selected_wilayah = "Semua Wilayah"
                     st.session_state.batch_selected_kab = "Semua Wilayah"
@@ -911,8 +909,10 @@ else:
                 if merged_geo is not None and not merged_geo.empty:
                     if selected_wilayah != "Semua Wilayah":
                         mg = merged_geo[merged_geo['nama_kabupaten'] == selected_wilayah].copy()
+                        # ===== FIX KRITIS: reset_index biar locations match geojson =====
+                        mg = mg.reset_index(drop=True)
                     else:
-                        mg = merged_geo.copy()
+                        mg = merged_geo.copy().reset_index(drop=True)
 
                     if not mg.empty:
                         if selected_wilayah != "Semua Wilayah":
@@ -952,7 +952,8 @@ else:
                                 borderwidth=1,
                                 font=dict(color="#94a3b8", size=11),
                                 title=dict(text="Kategori", font=dict(color="#64748b", size=10))
-                            )
+                            ),
+                            uirevision=f"batch_map_{selected_wilayah}"
                         )
                         st.plotly_chart(fig, use_container_width=True)
                     else:
@@ -1071,7 +1072,6 @@ else:
                         return 'background-color: rgba(34,212,122,0.15)'
                     return ''
 
-                # pandas >= 2.1 pakai .map(), versi lama pakai .applymap()
                 try:
                     styled = df_show.style.map(color_risk, subset=['Prediksi_Kategori'])
                 except AttributeError:
