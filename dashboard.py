@@ -949,7 +949,7 @@ else:
                                 marker_line_color="#ffffff",
                                 showscale=False,
                                 hoverinfo="skip"
-                            ))
+                            )
                         fig.update_layout(
                             height=500,
                             margin=dict(l=0,r=0,t=0,b=0),
