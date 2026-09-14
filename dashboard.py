@@ -28,6 +28,8 @@ if "manual_input" not in st.session_state:
     st.session_state.manual_input = None
 if "manual_wilayah" not in st.session_state:
     st.session_state.manual_wilayah = None
+if "manual_history" not in st.session_state:
+    st.session_state.manual_history = []
 if "batch_results_df" not in st.session_state:
     st.session_state.batch_results_df = None
 if "batch_selected_kab" not in st.session_state:
@@ -36,6 +38,8 @@ if "batch_uploaded" not in st.session_state:
     st.session_state.batch_uploaded = False
 if "df_final" not in st.session_state:
     st.session_state.df_final = None
+if "merged_geo" not in st.session_state:
+    st.session_state.merged_geo = None
 
 # ======================== LOAD MODEL ========================
 @st.cache_resource
@@ -98,22 +102,14 @@ KODE_TO_NAMA = {
 }
 NAMA_TO_KODE = {v: k for k, v in KODE_TO_NAMA.items()}
 
-# ======================== FUNGSI PREDIKSI (DIPERBAIKI) ========================
+# ======================== FUNGSI PREDIKSI ========================
 def compute_features(row):
     bsi = (row['persentase_sanitasi_layak'] +
            row['persentase_air_minum_layak'] +
            row['persentase_rumah_layak_huni']) / 3.0
     penduduk = row['jumlah_penduduk']
     faskes = row['jumlah_faskes']
-    # FIX SKALA: jumlah_penduduk bisa datang dalam dua satuan berbeda tergantung
-    # sumbernya -> Mode Prediksi Manual: input sudah "ribu orang" (mis. 700).
-    # Mode Upload Multiple File: berasal dari file BPS mentah (mis. 5.400.000
-    # untuk Kab. Bogor, lihat Tabel 4.3 skripsi), yaitu angka penuh jiwa.
-    # Training model (yang_rizkaaaaaaaaaaaaaa__1_.py) selalu membagi angka
-    # penuh dengan 1000 sebelum menghitung faskes_ratio, jadi di sini kita
-    # deteksi otomatis: kab/kota terpadat di Jabar (~5,4 juta jiwa) hanya
-    # setara ~5.400 jika sudah dalam ribuan, sehingga ambang 20.000 aman
-    # untuk membedakan kedua satuan tanpa risiko salah kategori.
+    # Deteksi otomatis satuan: angka penuh (jiwa) vs ribuan (orang)
     AMBANG_ANGKA_PENUH = 20000
     penduduk_ribuan = penduduk / 1000.0 if penduduk > AMBANG_ANGKA_PENUH else penduduk
     if penduduk_ribuan > 0 and faskes > 0:
@@ -165,12 +161,16 @@ def get_shap_values(input_dict, pred_class=2):
     if isinstance(shap_values, list):
         sv_class = shap_values[pred_class][0]
     else:
-        sv_class = shap_values[0, :, pred_class]
+        # XGBoost multi-class: shape (n_samples, n_features, n_classes)
+        if shap_values.ndim == 3:
+            sv_class = shap_values[0, :, pred_class]
+        else:
+            sv_class = shap_values[0]
     feature_names = ['basic_service_index', 'faskes_ratio', 'poverty_density',
                      'pengeluaran_per_kapita', 'kepadatan_penduduk']
     return {feature_names[i]: sv_class[i] for i in range(len(feature_names))}
 
-# ======================== FUNGSI BACA FILE (DIPERBAIKI) ========================
+# ======================== FUNGSI BACA FILE ========================
 def normalize_kabupaten_name(name):
     if pd.isna(name):
         return None
@@ -509,7 +509,7 @@ div[data-testid="stForm"] .stFormSubmitButton button:hover { opacity: 0.9 !impor
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 4px; }
 
-/* ===== PEMADATAN UI (supaya muat 1 layar tanpa scroll) ===== */
+/* ===== PEMADATAN UI ===== */
 .block-container { padding-top: 1rem !important; padding-bottom: 0.5rem !important; }
 div[data-testid="stVerticalBlock"] { gap: 0.55rem !important; }
 div[data-testid="column"] { gap: 0.55rem !important; }
@@ -550,7 +550,7 @@ with st.sidebar:
         <div class="ml-row"><span class="ml-key">Status</span><span class="ml-badge">AKTIF</span></div>
     </div>
     """, unsafe_allow_html=True)
-    
+
     mode = st.radio(
         "Pilih Mode",
         ["Mode Prediksi Manual", "Mode Upload Multiple File"],
@@ -565,9 +565,8 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ======================== MODE PREDIKSI MANUAL (DIPERBAIKI) ========================
+# ======================== MODE PREDIKSI MANUAL ========================
 if mode == "Mode Prediksi Manual":
-    # Nilai default tiap field (dipakai form & tombol reset, biar konsisten satu sumber)
     MANUAL_DEFAULTS = {
         "manual_jml_penduduk": "700.0",
         "manual_miskin": 3.5,
@@ -580,8 +579,6 @@ if mode == "Mode Prediksi Manual":
     }
 
     col_left, col_right = st.columns([1, 1], gap="large")
-    # Inisialisasi nilai default HANYA jika belum pernah diisi sebelumnya
-    # (supaya tidak menimpa nilai yang sedang diketik user tiap rerun)
     for _k, _v in MANUAL_DEFAULTS.items():
         if _k not in st.session_state:
             st.session_state[_k] = _v
@@ -596,17 +593,15 @@ if mode == "Mode Prediksi Manual":
                 key="manual_wilayah_select",
                 help="Pilih kabupaten/kota yang datanya kamu masukkan di bawah. "
                      "Ini dipakai untuk menampilkan lokasinya di peta setelah prediksi, "
-                     "TIDAK mempengaruhi hasil perhitungan (hasil tetap berdasarkan "
-                     "8 angka yang kamu isi sendiri)."
+                     "TIDAK mempengaruhi hasil perhitungan."
             )
             col1, col2 = st.columns(2)
             with col1:
-                # ===== PERBAIKAN: text_input agar bisa desimal =====
                 jumlah_penduduk_str = st.text_input(
                     "Jumlah Penduduk",
                     key="manual_jml_penduduk",
-                    help="Boleh diisi angka penuh (misal 5400000 dari CSV BPS) ATAU dalam ribuan "
-                         "(misal 5400). Sistem otomatis mendeteksi satuannya."
+                    help="Boleh diisi angka penuh (misal 5400000) ATAU dalam ribuan (misal 5400). "
+                         "Sistem otomatis mendeteksi satuannya."
                 )
                 persentase_penduduk_miskin = st.number_input("Persentase Penduduk Miskin (%)", min_value=0.0, max_value=100.0, step=0.5, format="%.2f", key="manual_miskin")
                 persentase_air_minum_layak = st.number_input("Persentase Air Minum Layak (%)", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="manual_air_minum")
@@ -615,12 +610,10 @@ if mode == "Mode Prediksi Manual":
                 jumlah_faskes = st.number_input("Jumlah Fasilitas Kesehatan", min_value=0.0, max_value=1e9, step=1.0, format="%.0f", key="manual_faskes")
                 persentase_sanitasi_layak = st.number_input("Persentase Sanitasi Layak (%)", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="manual_sanitasi")
                 persentase_rumah_layak_huni = st.number_input("Persentase Rumah Layak Huni (%)", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="manual_rumah")
-                # ===== PERBAIKAN: text_input agar bisa desimal =====
                 pengeluaran_per_kapita_str = st.text_input("Pengeluaran per Kapita (ribu Rp/tahun)", key="manual_pengeluaran")
-            
+
             submitted = st.form_submit_button("Prediksi Sekarang", use_container_width=True)
             if submitted:
-                # Parsing nilai dari string (ganti koma dengan titik)
                 try:
                     jumlah_penduduk = float(jumlah_penduduk_str.replace(',', '.'))
                 except:
@@ -631,7 +624,7 @@ if mode == "Mode Prediksi Manual":
                 except:
                     st.error("❌ Format Pengeluaran per Kapita tidak valid. Gunakan angka (contoh: 10410.5 atau 10410,5)")
                     st.stop()
-                
+
                 input_dict = {
                     'jumlah_penduduk': jumlah_penduduk,
                     'jumlah_faskes': jumlah_faskes,
@@ -649,7 +642,6 @@ if mode == "Mode Prediksi Manual":
                     st.session_state.manual_wilayah = selected_wilayah_manual
                     st.success("✅ Prediksi berhasil!")
 
-                    # ---- Catat ke riwayat (maksimal 5 entri terakhir, terbaru di atas) ----
                     if "manual_history" not in st.session_state:
                         st.session_state.manual_history = []
                     st.session_state.manual_history.insert(0, {
@@ -669,12 +661,9 @@ if mode == "Mode Prediksi Manual":
             res = st.session_state.manual_result
             kat = res["kategori"]
             risk_idx = res["risk_index"]
-            prob_rendah = res["prob_rendah"]*100
-            prob_sedang = res["prob_sedang"]*100
-            prob_tinggi = res["prob_tinggi"]*100
             color_kat = {"Tinggi":"#ef4444","Sedang":"#f5a623","Rendah":"#22d47a"}.get(kat,"#94a3b8")
             glow_kat = {"Tinggi":"rgba(239,68,68,0.15)","Sedang":"rgba(245,166,35,0.12)","Rendah":"rgba(34,212,122,0.12)"}.get(kat,"rgba(148,163,184,0.08)")
-            
+
             st.markdown(f"""
             <div style="display:flex; gap:10px; margin-bottom:8px;">
                 <div style="flex:1; background:#162032; border:1px solid {color_kat}40; border-radius:8px; padding:8px 10px; text-align:center; box-shadow: 0 0 18px {glow_kat};">
@@ -714,8 +703,16 @@ if mode == "Mode Prediksi Manual":
                     if not mg_manual.empty:
                         mg_manual['Kategori'] = kat
                         mg_manual['Nama'] = st.session_state.manual_wilayah
-                        lat_m = mg_manual.geometry.centroid.y.iloc[0]
-                        lon_m = mg_manual.geometry.centroid.x.iloc[0]
+                        # Gunakan CRS terproyeksi untuk centroid agar tidak ada warning
+                        try:
+                            mg_proj = mg_manual.to_crs(epsg=3857)
+                            centroid = mg_proj.geometry.centroid.to_crs(epsg=4326)
+                            lat_m = centroid.y.iloc[0]
+                            lon_m = centroid.x.iloc[0]
+                        except Exception:
+                            lat_m = mg_manual.geometry.centroid.y.iloc[0]
+                            lon_m = mg_manual.geometry.centroid.x.iloc[0]
+
                         fig_manual = px.choropleth_map(
                             mg_manual,
                             geojson=json.loads(mg_manual.to_json()),
@@ -776,7 +773,7 @@ if mode == "Mode Prediksi Manual":
         else:
             st.info("Isi form di sebelah kiri dan tekan tombol Prediksi.")
 
-# ======================== MODE UPLOAD (DIPERBAIKI PROGRESS BAR) ========================
+# ======================== MODE UPLOAD ========================
 else:
     st.markdown('<div class="panel-card"><div class="title">📂 Upload File Data Mentah (CSV/Excel)</div><div class="sub">Pilih semua file BPS sekaligus</div></div>', unsafe_allow_html=True)
     uploaded_files = st.file_uploader(
@@ -790,16 +787,15 @@ else:
     if uploaded_files:
         st.session_state.df_final = None
         st.session_state.batch_results_df = None
-        
+
         with st.spinner("Memproses dan menggabungkan data..."):
             df_preprocessed = merge_and_preprocess(uploaded_files)
-        
+
         if df_preprocessed is not None and not df_preprocessed.empty:
             st.success(f"✅ Berhasil memproses data: {len(df_preprocessed)} wilayah unik.")
-            
+
             results = []
             pb = st.progress(0, text="Memprediksi...")
-            # FIX: gunakan enumerate untuk index counter
             for i, (idx, row) in enumerate(df_preprocessed.iterrows()):
                 inp = row.to_dict()
                 pred = predict_single(inp)
@@ -813,7 +809,7 @@ else:
                 })
                 pb.progress((i + 1) / len(df_preprocessed))
             pb.empty()
-            
+
             df_results = pd.DataFrame(results)
             df_final = pd.concat([df_preprocessed.reset_index(drop=True), df_results], axis=1)
             st.session_state.df_final = df_final
@@ -826,14 +822,17 @@ else:
             else:
                 tahun_terbaru = None
                 df_display = df_final.copy()
-            
+
             with st.sidebar:
                 if not df_display.empty:
                     wilayah_list = ["Semua Wilayah"] + sorted(df_display['nama_kabupaten'].unique())
+                    default_idx = 0
+                    if st.session_state.batch_selected_kab in wilayah_list:
+                        default_idx = wilayah_list.index(st.session_state.batch_selected_kab)
                     selected_wilayah = st.selectbox(
                         "Filter Wilayah",
                         wilayah_list,
-                        index=0 if st.session_state.batch_selected_kab not in wilayah_list else wilayah_list.index(st.session_state.batch_selected_kab),
+                        index=default_idx,
                         key="batch_filter_wilayah"
                     )
                     st.session_state.batch_selected_kab = selected_wilayah
@@ -845,7 +844,10 @@ else:
             if gdf_geo is not None and 'kode_kabupaten_kota' in df_display.columns:
                 df_display['kode_wilayah'] = df_display['kode_kabupaten_kota'].astype(str)
                 gdf_geo['kode_wilayah'] = gdf_geo['kode_wilayah'].astype(str)
-                merged_geo = gdf_geo.merge(df_display[['kode_wilayah','Prediksi_Kategori','Risk_Index','nama_kabupaten']], on='kode_wilayah', how='inner')
+                merged_geo = gdf_geo.merge(
+                    df_display[['kode_wilayah','Prediksi_Kategori','Risk_Index','nama_kabupaten']],
+                    on='kode_wilayah', how='inner'
+                )
                 if merged_geo.empty:
                     st.warning("⚠️ Tidak ada data yang cocok dengan GeoJSON.")
                     merged_geo = None
@@ -856,16 +858,15 @@ else:
             st.session_state.merged_geo = merged_geo
 
             col_peta, col_kanan = st.columns([2, 1], gap="large")
-            
+
             with col_peta:
-                # FIX: cegah ZeroDivisionError
                 if not df_display.empty:
                     counts = df_display['Prediksi_Kategori'].value_counts()
                     total = len(df_display)
                     renda = counts.get('Rendah', 0)
                     seda = counts.get('Sedang', 0)
                     ting = counts.get('Tinggi', 0)
-                    
+
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.markdown(f"""
@@ -912,28 +913,29 @@ else:
                         mg = merged_geo[merged_geo['nama_kabupaten'] == selected_wilayah].copy()
                     else:
                         mg = merged_geo.copy()
-                    if not mg.empty:
-                    if selected_wilayah != "Semua Wilayah":
-    fitbounds = "locations"
-else:
-    fitbounds = None
 
-fig = px.choropleth_map(
-    mg,
-    geojson=json.loads(mg.to_json()),
-    locations=mg.index,
-    color='Prediksi_Kategori',
-    color_discrete_map={
-        'Tinggi':'#ef4444',
-        'Sedang':'#f5a623',
-        'Rendah':'#22d47a'
-    },
-    map_style="carto-darkmatter",
-    fitbounds=fitbounds,
-    opacity=0.8,
-    hover_name='nama_kabupaten',
-    hover_data={}
-)
+                    if not mg.empty:
+                        if selected_wilayah != "Semua Wilayah":
+                            fitbounds = "locations"
+                        else:
+                            fitbounds = None
+
+                        fig = px.choropleth_map(
+                            mg,
+                            geojson=json.loads(mg.to_json()),
+                            locations=mg.index,
+                            color='Prediksi_Kategori',
+                            color_discrete_map={
+                                'Tinggi': '#ef4444',
+                                'Sedang': '#f5a623',
+                                'Rendah': '#22d47a'
+                            },
+                            map_style="carto-darkmatter",
+                            fitbounds=fitbounds,
+                            opacity=0.8,
+                            hover_name='nama_kabupaten',
+                            hover_data={}
+                        )
                         fig.update_traces(
                             hovertemplate='<b>%{hovertext}</b><extra></extra>',
                             marker_line_width=0.6,
@@ -941,7 +943,7 @@ fig = px.choropleth_map(
                         )
                         fig.update_layout(
                             height=500,
-                            margin=dict(l=0,r=0,t=0,b=0),
+                            margin=dict(l=0, r=0, t=0, b=0),
                             paper_bgcolor="rgba(0,0,0,0)",
                             plot_bgcolor="rgba(0,0,0,0)",
                             legend=dict(
@@ -963,12 +965,9 @@ fig = px.choropleth_map(
                     row = df_display[df_display['nama_kabupaten'] == selected_wilayah].iloc[0]
                     kat = row['Prediksi_Kategori']
                     risk = row['Risk_Index']
-                    prob_rendah = row['Prob_Rendah']*100
-                    prob_sedang = row['Prob_Sedang']*100
-                    prob_tinggi = row['Prob_Tinggi']*100
                     color_kat = {"Tinggi":"#ef4444","Sedang":"#f5a623","Rendah":"#22d47a"}.get(kat,"#94a3b8")
                     glow_kat = {"Tinggi":"rgba(239,68,68,0.15)","Sedang":"rgba(245,166,35,0.12)","Rendah":"rgba(34,212,122,0.12)"}.get(kat,"rgba(148,163,184,0.08)")
-                    
+
                     st.markdown(f"""
                     <div style="background:#162032; border:1px solid {color_kat}30; border-radius:14px; padding:1.2rem 1rem; margin-bottom:1rem; box-shadow: 0 0 30px {glow_kat};">
                         <div style="font-size:0.7rem; color:#94a3b8; letter-spacing:1.2px; text-transform:uppercase; margin-bottom:6px; font-weight:600;">DETAIL WILAYAH</div>
@@ -982,7 +981,7 @@ fig = px.choropleth_map(
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-                    
+
                     inp = row.to_dict()
                     shap_dict = get_shap_values(inp, pred_class=int(row['pred_class']))
                     feature_names_display = {
@@ -993,7 +992,7 @@ fig = px.choropleth_map(
                         "kepadatan_penduduk": "Kepadatan Penduduk"
                     }
                     total_abs = sum(abs(v) for v in shap_dict.values()) or 1
-                    st.markdown(f"""
+                    st.markdown("""
                     <div style="font-size:0.85rem; font-weight:600; color:var(--text-2); letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">📊 Faktor Risiko (SHAP)</div>
                     """, unsafe_allow_html=True)
                     for feat, shap_val in sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True):
@@ -1056,13 +1055,13 @@ fig = px.choropleth_map(
                 cols_show = ['nama_kabupaten', 'tahun', 'Prediksi_Kategori', 'Risk_Index', 'Prob_Rendah', 'Prob_Sedang', 'Prob_Tinggi']
                 cols_show = [c for c in cols_show if c in df_tampil.columns]
                 df_show = df_tampil[cols_show].copy()
-                
+
                 for col in ['Prob_Rendah','Prob_Sedang','Prob_Tinggi']:
                     if col in df_show.columns:
                         df_show[col] = df_show[col].apply(lambda x: f"{x*100:.1f}%")
                 if 'Risk_Index' in df_show.columns:
                     df_show['Risk_Index'] = df_show['Risk_Index'].apply(lambda x: f"{x:.1f}")
-                
+
                 def color_risk(val):
                     if val == 'Tinggi':
                         return 'background-color: rgba(239,68,68,0.15)'
@@ -1071,18 +1070,23 @@ fig = px.choropleth_map(
                     elif val == 'Rendah':
                         return 'background-color: rgba(34,212,122,0.15)'
                     return ''
-                
-                styled = df_show.style.applymap(color_risk, subset=['Prediksi_Kategori'])
+
+                # pandas >= 2.1 pakai .map(), versi lama pakai .applymap()
+                try:
+                    styled = df_show.style.map(color_risk, subset=['Prediksi_Kategori'])
+                except AttributeError:
+                    styled = df_show.style.applymap(color_risk, subset=['Prediksi_Kategori'])
+
                 styled = styled.set_table_styles([
-                    {'selector': 'thead th', 'props': [('background-color', '#1a2538'), ('color', '#94a3b8'), 
-                                                       ('font-size', '0.75rem'), ('padding', '8px 10px'), 
+                    {'selector': 'thead th', 'props': [('background-color', '#1a2538'), ('color', '#94a3b8'),
+                                                       ('font-size', '0.75rem'), ('padding', '8px 10px'),
                                                        ('text-align', 'left'), ('font-weight', '600')]},
                     {'selector': 'tbody tr:nth-child(even)', 'props': [('background-color', 'rgba(255,255,255,0.03)')]},
                     {'selector': 'tbody tr:hover', 'props': [('background-color', 'rgba(255,255,255,0.07)')]},
-                    {'selector': 'td', 'props': [('padding', '8px 10px'), ('font-size', '0.8rem'), 
+                    {'selector': 'td', 'props': [('padding', '8px 10px'), ('font-size', '0.8rem'),
                                                  ('border-bottom', '1px solid rgba(255,255,255,0.05)')]},
                 ])
-                
+
                 st.dataframe(styled, use_container_width=True, height=400, hide_index=True)
             else:
                 st.info("Tidak ada data untuk ditampilkan.")
@@ -1130,7 +1134,7 @@ fig = px.choropleth_map(
 
             csv = df_final.to_csv(index=False).encode('utf-8')
             st.download_button("⬇️ Download CSV Hasil Prediksi (Semua Wilayah & Tahun)", data=csv, file_name="hasil_prediksi_tbc.csv", mime="text/csv")
-            
+
         else:
             st.error("❌ Gagal memproses data. Periksa kembali file-file yang diupload.")
 
