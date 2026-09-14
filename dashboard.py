@@ -179,9 +179,8 @@ def load_geojson():
             return gdf[['kode_wilayah', 'geometry']].copy()
     return None
 
-# ======================== HELPER: BANGUN GEOJSON + CENTER/ZOOM ========================
+# ======================== HELPER: GEOJSON + CENTER/ZOOM ========================
 def build_geojson_and_view(gdf_subset):
-    """Bangun geojson siap pakai + center & zoom otomatis dari bounds."""
     gdf_subset = gdf_subset[gdf_subset.geometry.notna() & ~gdf_subset.geometry.is_empty].copy()
     gdf_subset = gdf_subset.reset_index(drop=True)
     geojson_dict = json.loads(gdf_subset.to_json())
@@ -212,7 +211,6 @@ def build_geojson_and_view(gdf_subset):
 
 def render_choropleth(gdf_subset, color_col, color_map, hover_name,
                       height=500, opacity=0.8, uirevision="map_default"):
-    """Render peta choropleth yang aman dari TypeError fitbounds."""
     if gdf_subset is None or gdf_subset.empty:
         return None
     gdf_subset, geojson_dict, locations, clat, clon, zoom = build_geojson_and_view(gdf_subset)
@@ -298,7 +296,6 @@ def process_single_file(file, filename):
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
     df = df.dropna(how='all')
 
-    # Kasus 2 kolom
     if len(df.columns) == 2:
         col0, col1 = df.columns[0], df.columns[1]
         if 'kabupaten' in col0 or 'kota' in col0 or 'wilayah' in col0:
@@ -331,7 +328,6 @@ def process_single_file(file, filename):
             result = result.dropna(subset=[indikator])
             return result.drop_duplicates(subset=['kode_kabupaten_kota', 'tahun'])
 
-    # Faskes
     if 'jenis_faskes' in df.columns and 'jumlah_faskes' in df.columns:
         kode_col = None
         for c in ['kode_kabupaten_kota', 'kode_kabupaten']:
@@ -362,7 +358,6 @@ def process_single_file(file, filename):
         df_agg['kode_kabupaten_kota'] = df_agg['kode_kabupaten_kota'].astype(str).str.extract(r'(\d{4})')[0]
         return df_agg
 
-    # Fallback
     kode_col = None
     for c in ['kode_kabupaten_kota', 'kode_kabupaten']:
         if c in df.columns:
@@ -528,14 +523,133 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif !important; }
 .panel-card { background: var(--bg-surface); border-radius: 10px; padding: 0.8rem 1.2rem; margin-bottom: 1rem; border-left: 4px solid var(--accent); display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
 .panel-card .title { font-size: 0.85rem; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-1); margin: 0; }
 .panel-card .sub { font-size: 0.65rem; color: var(--text-3); margin-left: auto; font-style: italic; }
-.stSelectbox > div > div { background: var(--bg-surface) !important; border: 1px solid var(--border-mid) !important; color: var(--text-1) !important; border-radius: 10px !important; font-size: 0.82rem !important; }
+
+/* ===== INPUT & SELECT DARK THEME ===== */
+div[data-testid="stTextInput"] div[data-baseweb="input"],
+div[data-testid="stNumberInput"] div[data-baseweb="input"] {
+    background-color: #101828 !important;
+    border: 1px solid rgba(255,255,255,0.09) !important;
+    border-radius: 10px !important;
+}
+div[data-testid="stTextInput"] input,
+div[data-testid="stNumberInput"] input {
+    background-color: transparent !important;
+    color: #f0f4ff !important;
+    border: none !important;
+    -webkit-text-fill-color: #f0f4ff !important;
+}
+div[data-testid="stNumberInput"] button {
+    background-color: #101828 !important;
+    color: #f0f4ff !important;
+    border: none !important;
+}
+div[data-testid="stNumberInput"] button:hover {
+    background-color: #162032 !important;
+}
+div[data-testid="stNumberInput"] button svg {
+    fill: #f0f4ff !important;
+}
+.stNumberInput label, .stTextInput label {
+    font-size: 0.72rem !important;
+    color: #94a3b8 !important;
+    font-weight: 500 !important;
+}
+
+/* Selectbox */
+div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+    background-color: #101828 !important;
+    border: 1px solid rgba(255,255,255,0.09) !important;
+    color: #f0f4ff !important;
+    border-radius: 10px !important;
+}
+div[data-testid="stSelectbox"] div[data-baseweb="select"] span {
+    color: #f0f4ff !important;
+}
+div[data-baseweb="popover"] ul {
+    background-color: #101828 !important;
+}
+div[data-baseweb="popover"] li {
+    color: #f0f4ff !important;
+}
+div[data-baseweb="popover"] li:hover {
+    background-color: #162032 !important;
+}
+
+/* ===== FILE UPLOADER DARK THEME ===== */
+div[data-testid="stFileUploader"] section,
+div[data-testid="stFileUploaderDropzone"],
+section[data-testid="stFileUploaderDropzone"] {
+    background-color: #101828 !important;
+    border: 1.5px dashed rgba(255,255,255,0.15) !important;
+    border-radius: 12px !important;
+    color: #f0f4ff !important;
+}
+div[data-testid="stFileUploader"] section button,
+div[data-testid="stFileUploaderDropzone"] button,
+section[data-testid="stFileUploaderDropzone"] button {
+    background-color: #e8445a !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+}
+div[data-testid="stFileUploader"] section button:hover,
+div[data-testid="stFileUploaderDropzone"] button:hover,
+section[data-testid="stFileUploaderDropzone"] button:hover {
+    opacity: 0.9 !important;
+    background-color: #e8445a !important;
+}
+div[data-testid="stFileUploader"] section small,
+div[data-testid="stFileUploader"] section span,
+div[data-testid="stFileUploader"] section div,
+div[data-testid="stFileUploaderDropzone"] small,
+div[data-testid="stFileUploaderDropzone"] span,
+div[data-testid="stFileUploaderDropzone"] div {
+    color: #94a3b8 !important;
+}
+div[data-testid="stFileUploader"] svg {
+    fill: #94a3b8 !important;
+    color: #94a3b8 !important;
+}
+div[data-testid="stFileUploader"] [data-testid="stFileUploaderFileName"] {
+    color: #f0f4ff !important;
+}
+/* file list item */
+div[data-testid="stFileUploader"] ul li,
+div[data-testid="stFileUploader"] ol li {
+    color: #f0f4ff !important;
+    background-color: #162032 !important;
+    border-radius: 8px !important;
+    padding: 6px 10px !important;
+}
+
+/* Radio button */
 .stRadio > div { gap: 12px !important; background: var(--bg-surface); padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border-dim); margin-top: 8px; }
-.stRadio label { font-size: 0.85rem !important; font-weight: 500 !important; color: var(--text-1) !important; gap: 8px; }
+.stRadio label, .stRadio label p, .stRadio div[role="radiogroup"] label { font-size: 0.85rem !important; font-weight: 500 !important; color: #f0f4ff !important; }
 .stRadio [data-baseweb="radio"]:checked + div { border-color: var(--accent) !important; background: var(--accent-dim); }
-.stNumberInput > div > div > input, .stTextInput > div > div > input { background: var(--bg-surface) !important; border: 1px solid var(--border-mid) !important; color: var(--text-1) !important; border-radius: 10px !important; font-family: 'DM Mono', monospace !important; font-size: 0.85rem !important; }
-.stNumberInput label, .stTextInput label { font-size: 0.72rem !important; color: var(--text-2) !important; font-weight: 500 !important; }
-div[data-testid="stForm"] .stFormSubmitButton button { background: var(--accent) !important; color: #fff !important; border: none !important; border-radius: 12px !important; font-weight: 600 !important; box-shadow: 0 4px 20px var(--accent-glow) !important; }
+
+/* Form submit */
+div[data-testid="stForm"] .stFormSubmitButton button {
+    background: var(--accent) !important; color: #fff !important; border: none !important;
+    border-radius: 12px !important; font-weight: 600 !important;
+    box-shadow: 0 4px 20px var(--accent-glow) !important;
+}
+
+/* Alert */
 .stAlert { border-radius: 12px !important; font-size: 0.78rem !important; }
+
+/* Metric */
+div[data-testid="stMetric"] {
+    background-color: #101828 !important;
+    padding: 12px 16px !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(255,255,255,0.05) !important;
+}
+div[data-testid="stMetric"] label, div[data-testid="stMetric"] div {
+    color: #f0f4ff !important;
+}
+
+/* Misc */
 .stPlotlyChart { border-radius: 14px; overflow: hidden; }
 .footer { text-align: center; font-size: 0.58rem; color: var(--text-3); padding: 14px 0 10px; border-top: 1px solid var(--border-dim); margin-top: 16px; letter-spacing: 0.5px; }
 ::-webkit-scrollbar { width: 4px; }
@@ -549,8 +663,6 @@ div[data-testid="stVerticalBlock"], div[data-testid="column"] { gap: 0.55rem !im
 .panel-card .title { font-size: 0.72rem !important; }
 .stAlert { padding: 0.4rem 0.8rem !important; margin-bottom: 0.3rem !important; }
 .stAlert p { font-size: 0.72rem !important; margin: 0 !important; }
-div[data-testid="stNumberInput"], div[data-testid="stTextInput"], div[data-testid="stSelectbox"] { margin-bottom: -0.6rem !important; }
-.stNumberInput > div > div > input, .stTextInput > div > div > input { padding: 0.3rem 0.6rem !important; }
 div[data-testid="stForm"] { border: none !important; padding: 0 !important; }
 div[data-testid="stForm"] .stFormSubmitButton button { padding: 0.35rem 1rem !important; margin-top: 0.3rem !important; }
 .sidebar-brand { padding: 12px 18px 10px !important; margin-bottom: 8px !important; }
@@ -612,7 +724,6 @@ if mode == "Mode Prediksi Manual":
     with col_left:
         st.markdown('<div class="panel-card"><div class="title">📝 Input Data Wilayah (Mentah)</div></div>', unsafe_allow_html=True)
 
-        # Selectbox DI LUAR form → trigger rerun real-time
         selected_wilayah_manual = st.selectbox(
             "🗺️ Wilayah yang Diwakili Data Ini",
             sorted(NAMA_TO_KODE.keys()),
@@ -709,7 +820,6 @@ if mode == "Mode Prediksi Manual":
             </div>
             """, unsafe_allow_html=True)
 
-            # ===== PETA MANUAL =====
             st.markdown('<div class="panel-card"><div class="title">🗺️ Lokasi di Peta</div><div class="sub">Berdasarkan wilayah yang dipilih</div></div>', unsafe_allow_html=True)
             gdf_geo_manual = load_geojson()
             if gdf_geo_manual is not None:
@@ -732,7 +842,6 @@ if mode == "Mode Prediksi Manual":
             else:
                 st.info("ℹ️ File GeoJSON tidak tersedia.")
 
-            # ===== SHAP =====
             st.markdown('<div class="panel-card"><div class="title">Analisis SHAP</div><div class="sub">Kontribusi faktor</div></div>', unsafe_allow_html=True)
             if st.session_state.manual_input is not None:
                 shap_dict = get_shap_values(st.session_state.manual_input, pred_class=res['pred_class'])
@@ -873,7 +982,6 @@ else:
 
                 st.subheader(f"🗺️ Peta Sebaran Risiko (Tahun {tahun_terbaru if tahun_terbaru else 'Terbaru'})")
 
-                # ===== PETA BATCH (FIX UTAMA) =====
                 if merged_geo is not None and not merged_geo.empty:
                     if selected_wilayah != "Semua Wilayah":
                         mg = merged_geo[merged_geo['nama_kabupaten'] == selected_wilayah].copy()
