@@ -22,24 +22,14 @@ st.set_page_config(
 )
 
 # ======================== SESSION STATE ========================
-if "manual_result" not in st.session_state:
-    st.session_state.manual_result = None
-if "manual_input" not in st.session_state:
-    st.session_state.manual_input = None
-if "manual_wilayah" not in st.session_state:
-    st.session_state.manual_wilayah = None
-if "manual_history" not in st.session_state:
-    st.session_state.manual_history = []
-if "batch_results_df" not in st.session_state:
-    st.session_state.batch_results_df = None
-if "batch_selected_kab" not in st.session_state:
-    st.session_state.batch_selected_kab = "Semua Wilayah"
-if "batch_uploaded" not in st.session_state:
-    st.session_state.batch_uploaded = False
-if "df_final" not in st.session_state:
-    st.session_state.df_final = None
-if "merged_geo" not in st.session_state:
-    st.session_state.merged_geo = None
+for _k, _v in {
+    "manual_result": None, "manual_input": None, "manual_wilayah": None,
+    "manual_history": [], "batch_results_df": None,
+    "batch_selected_kab": "Semua Wilayah", "batch_uploaded": False,
+    "df_final": None, "merged_geo": None,
+}.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
 # ======================== LOAD MODEL ========================
 @st.cache_resource
@@ -68,13 +58,10 @@ if list(features) != _FEATURE_ORDER_EXPECTED:
 @st.cache_resource
 def load_evaluation_metrics():
     try:
-        metrics = joblib.load("model_metrics.pkl")
-        return metrics
+        return joblib.load("model_metrics.pkl")
     except:
         return {
-            'accuracy': 0.8519,
-            'precision_macro': 0.86,
-            'recall_macro': 0.85,
+            'accuracy': 0.8519, 'precision_macro': 0.86, 'recall_macro': 0.85,
             'f1_macro': 0.8480,
             'confusion_matrix': [[10, 0, 0], [2, 7, 1], [0, 1, 6]],
             'class_report': {
@@ -135,14 +122,10 @@ def predict_single(input_dict):
     proba = model.predict_proba(X_scaled)[0]
     pred_class = apply_threshold([proba], T0, T_HIGH)[0]
     kelas_map = {0: 'Rendah', 1: 'Sedang', 2: 'Tinggi'}
-    kategori = kelas_map[pred_class]
-    risk_index = proba[2] * 100
     return {
-        'kategori': kategori,
-        'risk_index': risk_index,
-        'prob_rendah': proba[0],
-        'prob_sedang': proba[1],
-        'prob_tinggi': proba[2],
+        'kategori': kelas_map[pred_class],
+        'risk_index': proba[2] * 100,
+        'prob_rendah': proba[0], 'prob_sedang': proba[1], 'prob_tinggi': proba[2],
         'pred_class': pred_class
     }
 
@@ -160,13 +143,114 @@ def get_shap_values(input_dict, pred_class=2):
     if isinstance(shap_values, list):
         sv_class = shap_values[pred_class][0]
     else:
-        if shap_values.ndim == 3:
-            sv_class = shap_values[0, :, pred_class]
-        else:
-            sv_class = shap_values[0]
+        sv_class = shap_values[0, :, pred_class] if shap_values.ndim == 3 else shap_values[0]
     feature_names = ['basic_service_index', 'faskes_ratio', 'poverty_density',
                      'pengeluaran_per_kapita', 'kepadatan_penduduk']
     return {feature_names[i]: sv_class[i] for i in range(len(feature_names))}
+
+# ======================== GEOJSON ========================
+@st.cache_data
+def load_geojson():
+    if os.path.exists("peta_risiko_jabar_2019_2024.geojson"):
+        gdf = gpd.read_file("peta_risiko_jabar_2019_2024.geojson")
+        kode_col = None
+        for col in ['KDBBPS', 'kode_kabupaten_kota', 'kode_kabupaten', 'KODE']:
+            if col in gdf.columns:
+                kode_col = col
+                break
+        if kode_col is None:
+            for col in gdf.columns:
+                if gdf[col].dtype == object:
+                    try:
+                        sample = gdf[col].dropna().astype(str).iloc[0]
+                        if re.sub(r'[^0-9]', '', sample).isdigit():
+                            kode_col = col
+                            break
+                    except:
+                        pass
+        if kode_col:
+            gdf['kode_wilayah'] = gdf[kode_col].apply(
+                lambda x: re.sub(r'[^0-9]', '', str(x))[:4].zfill(4)
+            )
+            if gdf.crs is None:
+                gdf = gdf.set_crs("EPSG:4326")
+            elif gdf.crs.to_string() != "EPSG:4326":
+                gdf = gdf.to_crs("EPSG:4326")
+            return gdf[['kode_wilayah', 'geometry']].copy()
+    return None
+
+# ======================== HELPER: BANGUN GEOJSON + CENTER/ZOOM ========================
+def build_geojson_and_view(gdf_subset):
+    """Bangun geojson siap pakai + center & zoom otomatis dari bounds."""
+    gdf_subset = gdf_subset[gdf_subset.geometry.notna() & ~gdf_subset.geometry.is_empty].copy()
+    gdf_subset = gdf_subset.reset_index(drop=True)
+    geojson_dict = json.loads(gdf_subset.to_json())
+    geojson_dict.pop('crs', None)
+    for i, feat in enumerate(geojson_dict.get('features', [])):
+        feat['id'] = str(i)
+
+    try:
+        minx, miny, maxx, maxy = gdf_subset.total_bounds
+        center_lat = float((miny + maxy) / 2)
+        center_lon = float((minx + maxx) / 2)
+        span = max(float(maxy - miny), float(maxx - minx))
+        if span < 0.15:
+            zoom = 10.5
+        elif span < 0.4:
+            zoom = 9.5
+        elif span < 0.8:
+            zoom = 9
+        elif span < 1.5:
+            zoom = 8
+        else:
+            zoom = 7
+    except Exception:
+        center_lat, center_lon, zoom = -6.9, 107.6, 7
+
+    locations = [str(i) for i in range(len(gdf_subset))]
+    return gdf_subset, geojson_dict, locations, center_lat, center_lon, zoom
+
+def render_choropleth(gdf_subset, color_col, color_map, hover_name,
+                      height=500, opacity=0.8, uirevision="map_default"):
+    """Render peta choropleth yang aman dari TypeError fitbounds."""
+    if gdf_subset is None or gdf_subset.empty:
+        return None
+    gdf_subset, geojson_dict, locations, clat, clon, zoom = build_geojson_and_view(gdf_subset)
+
+    fig = px.choropleth_map(
+        gdf_subset,
+        geojson=geojson_dict,
+        locations=locations,
+        featureidkey='id',
+        color=color_col,
+        color_discrete_map=color_map,
+        map_style="carto-darkmatter",
+        center={"lat": clat, "lon": clon},
+        zoom=zoom,
+        opacity=opacity,
+        hover_name=hover_name,
+        hover_data={}
+    )
+    fig.update_traces(
+        hovertemplate='<b>%{hovertext}</b><extra></extra>',
+        marker_line_width=0.8,
+        marker_line_color="rgba(255,255,255,0.25)"
+    )
+    fig.update_layout(
+        height=height,
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        legend=dict(
+            bgcolor="rgba(11,18,32,0.9)",
+            bordercolor="rgba(255,255,255,0.1)",
+            borderwidth=1,
+            font=dict(color="#94a3b8", size=11),
+            title=dict(text="Kategori", font=dict(color="#64748b", size=10))
+        ),
+        uirevision=uirevision
+    )
+    return fig
 
 # ======================== FUNGSI BACA FILE ========================
 def normalize_kabupaten_name(name):
@@ -189,8 +273,7 @@ def normalize_kabupaten_name(name):
 
 def process_single_file(file, filename):
     try:
-        name = filename.lower()
-        if name.endswith('.csv'):
+        if filename.lower().endswith('.csv'):
             content = file.read()
             file.seek(0)
             df = None
@@ -215,6 +298,7 @@ def process_single_file(file, filename):
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
     df = df.dropna(how='all')
 
+    # Kasus 2 kolom
     if len(df.columns) == 2:
         col0, col1 = df.columns[0], df.columns[1]
         if 'kabupaten' in col0 or 'kota' in col0 or 'wilayah' in col0:
@@ -224,9 +308,7 @@ def process_single_file(file, filename):
                 return None
             df[col1] = pd.to_numeric(df[col1], errors='coerce')
             df = df.dropna(subset=[col1])
-            mean_val = df[col1].mean()
-            is_absolut = mean_val > 100
-            if 'miskin' in filename.lower() and is_absolut:
+            if 'miskin' in filename.lower() and df[col1].mean() > 100:
                 st.warning(f"⚠️ File '{filename}' berisi absolut, diabaikan.")
                 return None
             df['nama_kabupaten_kota'] = df[col0].astype(str).str.upper().str.strip()
@@ -249,6 +331,7 @@ def process_single_file(file, filename):
             result = result.dropna(subset=[indikator])
             return result.drop_duplicates(subset=['kode_kabupaten_kota', 'tahun'])
 
+    # Faskes
     if 'jenis_faskes' in df.columns and 'jumlah_faskes' in df.columns:
         kode_col = None
         for c in ['kode_kabupaten_kota', 'kode_kabupaten']:
@@ -259,8 +342,7 @@ def process_single_file(file, filename):
             for c in df.columns:
                 if df[c].dtype == 'object':
                     try:
-                        sample = df[c].dropna().astype(str).iloc[0]
-                        if re.fullmatch(r'\d{4}', sample):
+                        if re.fullmatch(r'\d{4}', df[c].dropna().astype(str).iloc[0]):
                             kode_col = c
                             break
                     except:
@@ -280,6 +362,7 @@ def process_single_file(file, filename):
         df_agg['kode_kabupaten_kota'] = df_agg['kode_kabupaten_kota'].astype(str).str.extract(r'(\d{4})')[0]
         return df_agg
 
+    # Fallback
     kode_col = None
     for c in ['kode_kabupaten_kota', 'kode_kabupaten']:
         if c in df.columns:
@@ -289,8 +372,7 @@ def process_single_file(file, filename):
         for c in df.columns:
             if df[c].dtype == 'object':
                 try:
-                    sample = df[c].dropna().astype(str).iloc[0]
-                    if re.fullmatch(r'\d{4}', sample):
+                    if re.fullmatch(r'\d{4}', df[c].dropna().astype(str).iloc[0]):
                         kode_col = c
                         break
                 except:
@@ -313,35 +395,35 @@ def process_single_file(file, filename):
         else:
             return None
 
-    df_sel = df.copy()
     rename_map = {}
-    for c in df_sel.columns:
-        if 'penduduk' in c.lower() and 'jumlah' in c.lower():
+    for c in df.columns:
+        cl = c.lower()
+        if 'penduduk' in cl and 'jumlah' in cl:
             rename_map[c] = 'jumlah_penduduk'
-        elif 'miskin' in c.lower() and 'persentase' in c.lower():
+        elif 'miskin' in cl and 'persentase' in cl:
             rename_map[c] = 'persentase_penduduk_miskin'
-        elif 'pengeluaran' in c.lower():
+        elif 'pengeluaran' in cl:
             rename_map[c] = 'pengeluaran_per_kapita'
-        elif 'indeks' in c.lower() and 'pembangunan' in c.lower():
+        elif 'indeks' in cl and 'pembangunan' in cl:
             rename_map[c] = 'indeks_pembangunan_manusia'
-        elif 'kepadatan' in c.lower():
+        elif 'kepadatan' in cl:
             rename_map[c] = 'kepadatan_penduduk'
-        elif 'sanitasi' in c.lower():
+        elif 'sanitasi' in cl:
             rename_map[c] = 'persentase_sanitasi_layak'
-        elif 'air_minum' in c.lower() or ('air' in c.lower() and ('minum' in c.lower() or 'bersih' in c.lower() or 'layak' in c.lower())):
+        elif 'air_minum' in cl or ('air' in cl and ('minum' in cl or 'bersih' in cl or 'layak' in cl)):
             rename_map[c] = 'persentase_air_minum_layak'
-        elif 'rumah_layak' in c.lower() or 'layak_huni' in c.lower():
+        elif 'rumah_layak' in cl or 'layak_huni' in cl:
             rename_map[c] = 'persentase_rumah_layak_huni'
-        elif 'nakesmas' in c.lower() or 'tenaga_kesehatan' in c.lower():
+        elif 'nakesmas' in cl or 'tenaga_kesehatan' in cl:
             rename_map[c] = 'jumlah_nakesmas'
-        elif 'faskes' in c.lower() or 'fasilitas' in c.lower():
+        elif 'faskes' in cl or 'fasilitas' in cl:
             rename_map[c] = 'jumlah_faskes'
         elif c == kode_col:
             rename_map[c] = 'kode_kabupaten_kota'
         elif c == tahun_col:
             rename_map[c] = 'tahun'
 
-    df_sel = df_sel.rename(columns=rename_map)
+    df_sel = df.rename(columns=rename_map)
     if 'kode_kabupaten_kota' in df_sel.columns:
         df_sel['kode_kabupaten_kota'] = df_sel['kode_kabupaten_kota'].astype(str).str.extract(r'(\d{4})')[0]
     return df_sel
@@ -365,8 +447,7 @@ def merge_and_preprocess(uploaded_files):
     merged = all_dfs[0]
     for df in all_dfs[1:]:
         merged = merged.merge(df, on=['kode_kabupaten_kota', 'tahun'], how='outer', suffixes=('', '_dup'))
-        dup_cols = [c for c in merged.columns if c.endswith('_dup')]
-        for c in dup_cols:
+        for c in [c for c in merged.columns if c.endswith('_dup')]:
             base = c[:-4]
             if base in merged.columns:
                 merged[base] = merged[base].fillna(merged[c])
@@ -384,10 +465,7 @@ def merge_and_preprocess(uploaded_files):
     if merged['jumlah_faskes'].isna().all():
         st.warning("⚠️ Kolom 'jumlah_faskes' tidak ditemukan atau kosong. Nilai default 0 digunakan untuk prediksi.")
         faskes_cols = [c for c in merged.columns if 'faskes' in c.lower() or 'rumah_sakit' in c.lower()]
-        if faskes_cols:
-            merged['jumlah_faskes'] = merged[faskes_cols].sum(axis=1)
-        else:
-            merged['jumlah_faskes'] = 0
+        merged['jumlah_faskes'] = merged[faskes_cols].sum(axis=1) if faskes_cols else 0
 
     for col in required:
         if col in merged.columns:
@@ -405,47 +483,13 @@ def merge_and_preprocess(uploaded_files):
     if all(k in merged.columns for k in group_keys):
         df_num = merged.groupby(group_keys)[num_cols].median().reset_index()
         str_cols = [c for c in merged.columns if c not in num_cols + group_keys]
-        if str_cols:
-            df_str = merged.groupby(group_keys)[str_cols].first().reset_index()
-            df_final = df_num.merge(df_str, on=group_keys, how='left')
-        else:
-            df_final = df_num
+        df_final = (df_num.merge(merged.groupby(group_keys)[str_cols].first().reset_index(),
+                                 on=group_keys, how='left')
+                    if str_cols else df_num)
     else:
         df_final = merged.drop_duplicates(subset=['kode_kabupaten_kota'])
 
     return df_final
-
-# ======================== GEOJSON ========================
-@st.cache_data
-def load_geojson():
-    if os.path.exists("peta_risiko_jabar_2019_2024.geojson"):
-        gdf = gpd.read_file("peta_risiko_jabar_2019_2024.geojson")
-        kode_col = None
-        for col in ['KDBBPS', 'kode_kabupaten_kota', 'kode_kabupaten', 'KODE']:
-            if col in gdf.columns:
-                kode_col = col
-                break
-        if kode_col is None:
-            for col in gdf.columns:
-                if gdf[col].dtype == object:
-                    try:
-                        sample = gdf[col].dropna().astype(str).iloc[0]
-                        if re.sub(r'[^0-9]', '', sample).isdigit():
-                            kode_col = col
-                            break
-                    except:
-                        pass
-        if kode_col:
-            def clean_geo(x):
-                s = re.sub(r'[^0-9]', '', str(x))
-                return s[:4].zfill(4)
-            gdf['kode_wilayah'] = gdf[kode_col].apply(clean_geo)
-            if gdf.crs is None:
-                gdf = gdf.set_crs("EPSG:4326")
-            elif gdf.crs.to_string() != "EPSG:4326":
-                gdf = gdf.to_crs("EPSG:4326")
-            return gdf[['kode_wilayah', 'geometry']].copy()
-    return None
 
 # ======================== CSS ========================
 st.markdown("""
@@ -481,32 +525,23 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif !important; }
 .header-title { font-size: 2.1rem; font-weight: 700; color: var(--text-1); line-height: 1.15; margin: 0; letter-spacing: -0.5px; }
 .live-badge { display: inline-flex; align-items: center; gap: 5px; background: rgba(34,212,122,0.12); color: #22d47a; border: 1px solid rgba(34,212,122,0.25); padding: 3px 10px; border-radius: 20px; font-size: 0.58rem; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; vertical-align: middle; margin-left: 14px; }
 .live-badge::before { content: ''; display: inline-block; width: 5px; height: 5px; background: #22d47a; border-radius: 50%; animation: pulse-dot 2s ease-in-out infinite; }
-.panel-card { background: var(--bg-surface); border-radius: 10px; padding: 0.8rem 1.2rem; margin-bottom: 1rem; border-left: 4px solid var(--accent); display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); transition: all 0.2s ease; }
-.panel-card:hover { border-color: var(--border-lit); box-shadow: 0 6px 24px rgba(0,0,0,0.35); }
+.panel-card { background: var(--bg-surface); border-radius: 10px; padding: 0.8rem 1.2rem; margin-bottom: 1rem; border-left: 4px solid var(--accent); display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
 .panel-card .title { font-size: 0.85rem; font-weight: 600; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-1); margin: 0; }
 .panel-card .sub { font-size: 0.65rem; color: var(--text-3); margin-left: auto; font-style: italic; }
 .stSelectbox > div > div { background: var(--bg-surface) !important; border: 1px solid var(--border-mid) !important; color: var(--text-1) !important; border-radius: 10px !important; font-size: 0.82rem !important; }
-.stSelectbox > div > div:hover { border-color: var(--border-lit) !important; }
 .stRadio > div { gap: 12px !important; background: var(--bg-surface); padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border-dim); margin-top: 8px; }
 .stRadio label { font-size: 0.85rem !important; font-weight: 500 !important; color: var(--text-1) !important; gap: 8px; }
 .stRadio [data-baseweb="radio"]:checked + div { border-color: var(--accent) !important; background: var(--accent-dim); }
-.stNumberInput > div > div > input { background: var(--bg-surface) !important; border: 1px solid var(--border-mid) !important; color: var(--text-1) !important; border-radius: 10px !important; font-family: 'DM Mono', monospace !important; font-size: 0.85rem !important; }
-.stNumberInput label { font-size: 0.72rem !important; color: var(--text-2) !important; font-weight: 500 !important; }
-.stTextInput > div > div > input { background: var(--bg-surface) !important; border: 1px solid var(--border-mid) !important; color: var(--text-1) !important; border-radius: 10px !important; font-family: 'DM Mono', monospace !important; font-size: 0.85rem !important; }
-.stTextInput label { font-size: 0.72rem !important; color: var(--text-2) !important; font-weight: 500 !important; }
-div[data-testid="stForm"] .stFormSubmitButton button { background: var(--accent) !important; color: #fff !important; border: none !important; border-radius: 12px !important; font-weight: 600 !important; box-shadow: 0 4px 20px var(--accent-glow) !important; transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s !important; }
-div[data-testid="stForm"] .stFormSubmitButton button:hover { opacity: 0.9 !important; transform: translateY(-1px) !important; box-shadow: 0 6px 28px var(--accent-glow) !important; }
+.stNumberInput > div > div > input, .stTextInput > div > div > input { background: var(--bg-surface) !important; border: 1px solid var(--border-mid) !important; color: var(--text-1) !important; border-radius: 10px !important; font-family: 'DM Mono', monospace !important; font-size: 0.85rem !important; }
+.stNumberInput label, .stTextInput label { font-size: 0.72rem !important; color: var(--text-2) !important; font-weight: 500 !important; }
+div[data-testid="stForm"] .stFormSubmitButton button { background: var(--accent) !important; color: #fff !important; border: none !important; border-radius: 12px !important; font-weight: 600 !important; box-shadow: 0 4px 20px var(--accent-glow) !important; }
 .stAlert { border-radius: 12px !important; font-size: 0.78rem !important; }
 .stPlotlyChart { border-radius: 14px; overflow: hidden; }
 .footer { text-align: center; font-size: 0.58rem; color: var(--text-3); padding: 14px 0 10px; border-top: 1px solid var(--border-dim); margin-top: 16px; letter-spacing: 0.5px; }
 ::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 4px; }
-
-/* ===== PEMADATAN UI ===== */
 .block-container { padding-top: 1rem !important; padding-bottom: 0.5rem !important; }
-div[data-testid="stVerticalBlock"] { gap: 0.55rem !important; }
-div[data-testid="column"] { gap: 0.55rem !important; }
+div[data-testid="stVerticalBlock"], div[data-testid="column"] { gap: 0.55rem !important; }
 .main-header { margin-bottom: 10px !important; padding-left: 12px !important; }
 .header-title { font-size: 1.5rem !important; }
 .header-eyebrow { margin-bottom: 2px !important; font-size: 0.55rem !important; }
@@ -518,7 +553,6 @@ div[data-testid="stNumberInput"], div[data-testid="stTextInput"], div[data-testi
 .stNumberInput > div > div > input, .stTextInput > div > div > input { padding: 0.3rem 0.6rem !important; }
 div[data-testid="stForm"] { border: none !important; padding: 0 !important; }
 div[data-testid="stForm"] .stFormSubmitButton button { padding: 0.35rem 1rem !important; margin-top: 0.3rem !important; }
-div[data-testid="stForm"] .stFormSubmitButton { margin-bottom: -0.4rem !important; }
 .sidebar-brand { padding: 12px 18px 10px !important; margin-bottom: 8px !important; }
 .ml-status-box { margin-top: 10px !important; padding: 8px 12px !important; }
 </style>
@@ -535,9 +569,9 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     if not os.path.exists("peta_risiko_jabar_2019_2024.geojson"):
-        st.info("ℹ️ GeoJSON tidak ditemukan. Peta tidak akan ditampilkan.")
+        st.info("ℹ️ GeoJSON tidak ditemukan.")
 
-    st.markdown(f"""
+    st.markdown("""
     <div class="ml-status-box">
         <div class="ml-status-title">ML Status</div>
         <div class="ml-row"><span class="ml-key">Model</span><span class="ml-val">XGBoost</span></div>
@@ -559,46 +593,38 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+COLOR_MAP = {'Tinggi': '#ef4444', 'Sedang': '#f5a623', 'Rendah': '#22d47a'}
+
 # ======================== MODE PREDIKSI MANUAL ========================
 if mode == "Mode Prediksi Manual":
     MANUAL_DEFAULTS = {
-        "manual_jml_penduduk": "700.0",
-        "manual_miskin": 3.5,
-        "manual_air_minum": 96.0,
-        "manual_kepadatan": 400.0,
-        "manual_faskes": 90.0,
-        "manual_sanitasi": 97.0,
-        "manual_rumah": 96.0,
-        "manual_pengeluaran": "18000.0",
+        "manual_jml_penduduk": "700.0", "manual_miskin": 3.5,
+        "manual_air_minum": 96.0, "manual_kepadatan": 400.0,
+        "manual_faskes": 90.0, "manual_sanitasi": 97.0,
+        "manual_rumah": 96.0, "manual_pengeluaran": "18000.0",
     }
-
-    col_left, col_right = st.columns([1, 1], gap="large")
     for _k, _v in MANUAL_DEFAULTS.items():
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
+    col_left, col_right = st.columns([1, 1], gap="large")
+
     with col_left:
         st.markdown('<div class="panel-card"><div class="title">📝 Input Data Wilayah (Mentah)</div></div>', unsafe_allow_html=True)
 
-        # ===== FIX: selectbox di LUAR form, biar tiap ganti wilayah langsung rerun =====
+        # Selectbox DI LUAR form → trigger rerun real-time
         selected_wilayah_manual = st.selectbox(
             "🗺️ Wilayah yang Diwakili Data Ini",
             sorted(NAMA_TO_KODE.keys()),
             key="manual_wilayah_select",
-            help="Pilih kabupaten/kota yang datanya kamu masukkan di bawah. "
-                 "Ini dipakai untuk menampilkan lokasinya di peta setelah prediksi, "
-                 "TIDAK mempengaruhi hasil perhitungan."
+            help="Pilih kabupaten/kota. Dipakai untuk peta, TIDAK mempengaruhi hasil prediksi."
         )
 
         with st.form(key="manual_form"):
             col1, col2 = st.columns(2)
             with col1:
-                jumlah_penduduk_str = st.text_input(
-                    "Jumlah Penduduk",
-                    key="manual_jml_penduduk",
-                    help="Boleh diisi angka penuh (misal 5400000) ATAU dalam ribuan (misal 5400). "
-                         "Sistem otomatis mendeteksi satuannya."
-                )
+                jumlah_penduduk_str = st.text_input("Jumlah Penduduk", key="manual_jml_penduduk",
+                    help="Boleh angka penuh (5400000) ATAU ribuan (5400). Auto-detect.")
                 persentase_penduduk_miskin = st.number_input("Persentase Penduduk Miskin (%)", min_value=0.0, max_value=100.0, step=0.5, format="%.2f", key="manual_miskin")
                 persentase_air_minum_layak = st.number_input("Persentase Air Minum Layak (%)", min_value=0.0, max_value=100.0, step=1.0, format="%.2f", key="manual_air_minum")
                 kepadatan_penduduk = st.number_input("Kepadatan Penduduk (jiwa/km²)", min_value=0.0, max_value=1e9, step=100.0, format="%.0f", key="manual_kepadatan")
@@ -613,17 +639,16 @@ if mode == "Mode Prediksi Manual":
                 try:
                     jumlah_penduduk = float(jumlah_penduduk_str.replace(',', '.'))
                 except:
-                    st.error("❌ Format Jumlah Penduduk tidak valid. Gunakan angka (contoh: 5484.15 atau 5484,15)")
+                    st.error("❌ Format Jumlah Penduduk tidak valid.")
                     st.stop()
                 try:
                     pengeluaran_per_kapita = float(pengeluaran_per_kapita_str.replace(',', '.'))
                 except:
-                    st.error("❌ Format Pengeluaran per Kapita tidak valid. Gunakan angka (contoh: 10410.5 atau 10410,5)")
+                    st.error("❌ Format Pengeluaran per Kapita tidak valid.")
                     st.stop()
 
                 input_dict = {
-                    'jumlah_penduduk': jumlah_penduduk,
-                    'jumlah_faskes': jumlah_faskes,
+                    'jumlah_penduduk': jumlah_penduduk, 'jumlah_faskes': jumlah_faskes,
                     'persentase_penduduk_miskin': persentase_penduduk_miskin,
                     'persentase_sanitasi_layak': persentase_sanitasi_layak,
                     'persentase_air_minum_layak': persentase_air_minum_layak,
@@ -637,12 +662,8 @@ if mode == "Mode Prediksi Manual":
                     st.session_state.manual_input = input_dict
                     st.session_state.manual_wilayah = selected_wilayah_manual
                     st.success("✅ Prediksi berhasil!")
-
-                    if "manual_history" not in st.session_state:
-                        st.session_state.manual_history = []
                     st.session_state.manual_history.insert(0, {
-                        "Wilayah": selected_wilayah_manual,
-                        "Kategori": res["kategori"],
+                        "Wilayah": selected_wilayah_manual, "Kategori": res["kategori"],
                         "Risk Index": round(res["risk_index"], 1),
                         "P(Rendah)": f"{res['prob_rendah']*100:.1f}%",
                         "P(Sedang)": f"{res['prob_sedang']*100:.1f}%",
@@ -657,7 +678,7 @@ if mode == "Mode Prediksi Manual":
             res = st.session_state.manual_result
             kat = res["kategori"]
             risk_idx = res["risk_index"]
-            color_kat = {"Tinggi":"#ef4444","Sedang":"#f5a623","Rendah":"#22d47a"}.get(kat,"#94a3b8")
+            color_kat = COLOR_MAP.get(kat, "#94a3b8")
             glow_kat = {"Tinggi":"rgba(239,68,68,0.15)","Sedang":"rgba(245,166,35,0.12)","Rendah":"rgba(34,212,122,0.12)"}.get(kat,"rgba(148,163,184,0.08)")
 
             st.markdown(f"""
@@ -676,72 +697,42 @@ if mode == "Mode Prediksi Manual":
             </div>
             """, unsafe_allow_html=True)
 
-            rekom_text = {
+            rekom = {
                 "Rendah": ("ℹ️", "Kondisi terkendali. Pertahankan surveilans."),
                 "Sedang": ("⚠️", "Perlu monitoring aktif. Tingkatkan deteksi dini."),
                 "Tinggi": ("🚨", "Prioritas intervensi tinggi. Lakukan skrining aktif."),
             }.get(kat, ("ℹ️", ""))
             st.markdown(f"""
             <div style="background:{color_kat}12; border:1px solid {color_kat}35; border-left:4px solid {color_kat}; border-radius:8px; padding:8px 12px; margin-bottom:10px; display:flex; align-items:center; gap:8px;">
-                <span style="font-size:1rem;">{rekom_text[0]}</span>
-                <span style="font-size:0.75rem; color:#e2e8f0;"><b style="color:{color_kat};">Rekomendasi:</b> {rekom_text[1]}</span>
+                <span style="font-size:1rem;">{rekom[0]}</span>
+                <span style="font-size:0.75rem; color:#e2e8f0;"><b style="color:{color_kat};">Rekomendasi:</b> {rekom[1]}</span>
             </div>
             """, unsafe_allow_html=True)
 
-            # ======================== PETA WILAYAH TERPILIH ========================
-            # FIX: pakai selected_wilayah_manual (live) bukan session_state
-            if selected_wilayah_manual is not None:
-                st.markdown('<div class="panel-card"><div class="title">🗺️ Lokasi di Peta</div><div class="sub">Berdasarkan wilayah yang dipilih</div></div>', unsafe_allow_html=True)
-                gdf_geo_manual = load_geojson()
-                if gdf_geo_manual is not None:
-                    kode_terpilih = NAMA_TO_KODE.get(selected_wilayah_manual)
-                    gdf_geo_manual['kode_wilayah'] = gdf_geo_manual['kode_wilayah'].astype(str)
-                    mg_manual = gdf_geo_manual[gdf_geo_manual['kode_wilayah'] == str(kode_terpilih)].copy()
-                    # FIX KRITIS: reset_index supaya locations=mg.index match dgn geojson feature index (mulai 0)
-                    mg_manual = mg_manual.reset_index(drop=True)
-                    if not mg_manual.empty:
-                        mg_manual['Kategori'] = kat
-                        mg_manual['Nama'] = selected_wilayah_manual
-                        try:
-                            mg_proj = mg_manual.to_crs(epsg=3857)
-                            centroid = mg_proj.geometry.centroid.to_crs(epsg=4326)
-                            lat_m = centroid.y.iloc[0]
-                            lon_m = centroid.x.iloc[0]
-                        except Exception:
-                            lat_m = mg_manual.geometry.centroid.y.iloc[0]
-                            lon_m = mg_manual.geometry.centroid.x.iloc[0]
-
-                        fig_manual = px.choropleth_map(
-                            mg_manual,
-                            geojson=json.loads(mg_manual.to_json()),
-                            locations=mg_manual.index,
-                            color='Kategori',
-                            color_discrete_map={'Tinggi':'#ef4444','Sedang':'#f5a623','Rendah':'#22d47a'},
-                            map_style="carto-darkmatter",
-                            center={"lat": lat_m, "lon": lon_m},
-                            zoom=9,
-                            opacity=0.75,
-                            hover_name='Nama',
-                            hover_data={}
-                        )
-                        fig_manual.update_traces(
-                            hovertemplate='<b>%{hovertext}</b><extra></extra>',
-                            marker_line_width=2,
-                            marker_line_color="#ffffff"
-                        )
-                        fig_manual.update_layout(
-                            height=170,
-                            margin=dict(l=0, r=0, t=0, b=0),
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            showlegend=False,
-                            uirevision=f"manual_map_{selected_wilayah_manual}"
-                        )
+            # ===== PETA MANUAL =====
+            st.markdown('<div class="panel-card"><div class="title">🗺️ Lokasi di Peta</div><div class="sub">Berdasarkan wilayah yang dipilih</div></div>', unsafe_allow_html=True)
+            gdf_geo_manual = load_geojson()
+            if gdf_geo_manual is not None:
+                kode_terpilih = NAMA_TO_KODE.get(selected_wilayah_manual)
+                gdf_geo_manual['kode_wilayah'] = gdf_geo_manual['kode_wilayah'].astype(str)
+                mg_manual = gdf_geo_manual[gdf_geo_manual['kode_wilayah'] == str(kode_terpilih)].copy()
+                if not mg_manual.empty:
+                    mg_manual['Kategori'] = kat
+                    mg_manual['Nama'] = selected_wilayah_manual
+                    fig_manual = render_choropleth(
+                        mg_manual, color_col='Kategori', color_map=COLOR_MAP,
+                        hover_name='Nama', height=200, opacity=0.75,
+                        uirevision=f"manual_{selected_wilayah_manual}"
+                    )
+                    if fig_manual:
+                        fig_manual.update_layout(showlegend=False)
                         st.plotly_chart(fig_manual, use_container_width=True)
-                    else:
-                        st.info(f"ℹ️ Bentuk wilayah '{selected_wilayah_manual}' tidak ditemukan di GeoJSON.")
                 else:
-                    st.info("ℹ️ File GeoJSON tidak tersedia — peta tidak bisa ditampilkan.")
+                    st.info(f"ℹ️ Bentuk wilayah '{selected_wilayah_manual}' tidak ada di GeoJSON.")
+            else:
+                st.info("ℹ️ File GeoJSON tidak tersedia.")
 
+            # ===== SHAP =====
             st.markdown('<div class="panel-card"><div class="title">Analisis SHAP</div><div class="sub">Kontribusi faktor</div></div>', unsafe_allow_html=True)
             if st.session_state.manual_input is not None:
                 shap_dict = get_shap_values(st.session_state.manual_input, pred_class=res['pred_class'])
@@ -796,8 +787,7 @@ else:
             results = []
             pb = st.progress(0, text="Memprediksi...")
             for i, (idx, row) in enumerate(df_preprocessed.iterrows()):
-                inp = row.to_dict()
-                pred = predict_single(inp)
+                pred = predict_single(row.to_dict())
                 results.append({
                     'Prediksi_Kategori': pred['kategori'],
                     'Risk_Index': round(pred['risk_index'], 2),
@@ -822,21 +812,16 @@ else:
                 tahun_terbaru = None
                 df_display = df_final.copy()
 
-            # ===== FIX: sidebar selectbox tanpa key yg nutupin session_state lama =====
             with st.sidebar:
                 if not df_display.empty:
-                    wilayah_list = ["Semua Wilayah"] + sorted(df_display['nama_kabupaten'].unique())
-                    # pastikan session_state value masih valid
+                    wilayah_list = ["Semua Wilayah"] + sorted(df_display['nama_kabupaten'].dropna().unique())
                     if st.session_state.batch_selected_kab not in wilayah_list:
                         st.session_state.batch_selected_kab = "Semua Wilayah"
                     selected_wilayah = st.selectbox(
-                        "Filter Wilayah",
-                        wilayah_list,
-                        key="batch_selected_kab"
+                        "Filter Wilayah", wilayah_list, key="batch_selected_kab"
                     )
                 else:
                     selected_wilayah = "Semua Wilayah"
-                    st.session_state.batch_selected_kab = "Semua Wilayah"
 
             gdf_geo = load_geojson()
             if gdf_geo is not None and 'kode_kabupaten_kota' in df_display.columns:
@@ -866,96 +851,46 @@ else:
                     ting = counts.get('Tinggi', 0)
 
                     col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.markdown(f"""
-                        <div style="background:#0b1220; border-radius:14px; padding:16px 10px; border:1px solid rgba(34,212,122,0.25); text-align:center; box-shadow: 0 4px 16px rgba(0,0,0,0.4);">
-                            <div style="font-size:26px; margin-bottom:2px;">🟢</div>
-                            <div style="font-size:32px; font-weight:700; color:#22d47a; font-family:monospace; line-height:1.2;">{renda}</div>
-                            <div style="font-size:13px; color:#94a3b8; text-transform:uppercase; letter-spacing:1.2px; font-weight:600; margin-top:2px;">Rendah</div>
-                            <div style="font-size:14px; color:#64748b; margin-top:4px; font-weight:500;">{renda/total*100:.1f}%</div>
-                            <div style="width:100%; height:3px; background:rgba(255,255,255,0.06); border-radius:6px; margin-top:10px; overflow:hidden;">
-                                <div style="width:{renda/total*100}%; height:3px; background:#22d47a; border-radius:6px;"></div>
+                    for _col, _icon, _cnt, _lbl, _color in [
+                        (col1, "🟢", renda, "Rendah", "#22d47a"),
+                        (col2, "🟡", seda, "Sedang", "#f5a623"),
+                        (col3, "🔴", ting, "Tinggi", "#ef4444"),
+                    ]:
+                        with _col:
+                            st.markdown(f"""
+                            <div style="background:#0b1220; border-radius:14px; padding:16px 10px; border:1px solid {_color}40; text-align:center; box-shadow: 0 4px 16px rgba(0,0,0,0.4);">
+                                <div style="font-size:26px; margin-bottom:2px;">{_icon}</div>
+                                <div style="font-size:32px; font-weight:700; color:{_color}; font-family:monospace; line-height:1.2;">{_cnt}</div>
+                                <div style="font-size:13px; color:#94a3b8; text-transform:uppercase; letter-spacing:1.2px; font-weight:600; margin-top:2px;">{_lbl}</div>
+                                <div style="font-size:14px; color:#64748b; margin-top:4px; font-weight:500;">{_cnt/total*100:.1f}%</div>
+                                <div style="width:100%; height:3px; background:rgba(255,255,255,0.06); border-radius:6px; margin-top:10px; overflow:hidden;">
+                                    <div style="width:{_cnt/total*100}%; height:3px; background:{_color}; border-radius:6px;"></div>
+                                </div>
                             </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with col2:
-                        st.markdown(f"""
-                        <div style="background:#0b1220; border-radius:14px; padding:16px 10px; border:1px solid rgba(245,166,35,0.25); text-align:center; box-shadow: 0 4px 16px rgba(0,0,0,0.4);">
-                            <div style="font-size:26px; margin-bottom:2px;">🟡</div>
-                            <div style="font-size:32px; font-weight:700; color:#f5a623; font-family:monospace; line-height:1.2;">{seda}</div>
-                            <div style="font-size:13px; color:#94a3b8; text-transform:uppercase; letter-spacing:1.2px; font-weight:600; margin-top:2px;">Sedang</div>
-                            <div style="font-size:14px; color:#64748b; margin-top:4px; font-weight:500;">{seda/total*100:.1f}%</div>
-                            <div style="width:100%; height:3px; background:rgba(255,255,255,0.06); border-radius:6px; margin-top:10px; overflow:hidden;">
-                                <div style="width:{seda/total*100}%; height:3px; background:#f5a623; border-radius:6px;"></div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    with col3:
-                        st.markdown(f"""
-                        <div style="background:#0b1220; border-radius:14px; padding:16px 10px; border:1px solid rgba(239,68,68,0.25); text-align:center; box-shadow: 0 4px 16px rgba(0,0,0,0.4);">
-                            <div style="font-size:26px; margin-bottom:2px;">🔴</div>
-                            <div style="font-size:32px; font-weight:700; color:#ef4444; font-family:monospace; line-height:1.2;">{ting}</div>
-                            <div style="font-size:13px; color:#94a3b8; text-transform:uppercase; letter-spacing:1.2px; font-weight:600; margin-top:2px;">Tinggi</div>
-                            <div style="font-size:14px; color:#64748b; margin-top:4px; font-weight:500;">{ting/total*100:.1f}%</div>
-                            <div style="width:100%; height:3px; background:rgba(255,255,255,0.06); border-radius:6px; margin-top:10px; overflow:hidden;">
-                                <div style="width:{ting/total*100}%; height:3px; background:#ef4444; border-radius:6px;"></div>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
                 else:
                     st.warning("⚠️ Tidak ada data untuk tahun terbaru.")
 
                 st.subheader(f"🗺️ Peta Sebaran Risiko (Tahun {tahun_terbaru if tahun_terbaru else 'Terbaru'})")
+
+                # ===== PETA BATCH (FIX UTAMA) =====
                 if merged_geo is not None and not merged_geo.empty:
                     if selected_wilayah != "Semua Wilayah":
                         mg = merged_geo[merged_geo['nama_kabupaten'] == selected_wilayah].copy()
-                        # ===== FIX KRITIS: reset_index biar locations match geojson =====
-                        mg = mg.reset_index(drop=True)
                     else:
-                        mg = merged_geo.copy().reset_index(drop=True)
+                        mg = merged_geo.copy()
+                    mg = mg.reset_index(drop=True)
 
                     if not mg.empty:
-                        if selected_wilayah != "Semua Wilayah":
-                            fitbounds = "locations"
+                        fig = render_choropleth(
+                            mg, color_col='Prediksi_Kategori', color_map=COLOR_MAP,
+                            hover_name='nama_kabupaten', height=500, opacity=0.8,
+                            uirevision=f"batch_{selected_wilayah}"
+                        )
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
                         else:
-                            fitbounds = None
-
-                        fig = px.choropleth_map(
-                            mg,
-                            geojson=json.loads(mg.to_json()),
-                            locations=mg.index,
-                            color='Prediksi_Kategori',
-                            color_discrete_map={
-                                'Tinggi': '#ef4444',
-                                'Sedang': '#f5a623',
-                                'Rendah': '#22d47a'
-                            },
-                            map_style="carto-darkmatter",
-                            fitbounds=fitbounds,
-                            opacity=0.8,
-                            hover_name='nama_kabupaten',
-                            hover_data={}
-                        )
-                        fig.update_traces(
-                            hovertemplate='<b>%{hovertext}</b><extra></extra>',
-                            marker_line_width=0.6,
-                            marker_line_color="rgba(255,255,255,0.15)"
-                        )
-                        fig.update_layout(
-                            height=500,
-                            margin=dict(l=0, r=0, t=0, b=0),
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(0,0,0,0)",
-                            legend=dict(
-                                bgcolor="rgba(11,18,32,0.9)",
-                                bordercolor="rgba(255,255,255,0.1)",
-                                borderwidth=1,
-                                font=dict(color="#94a3b8", size=11),
-                                title=dict(text="Kategori", font=dict(color="#64748b", size=10))
-                            ),
-                            uirevision=f"batch_map_{selected_wilayah}"
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
+                            st.info("Peta kosong.")
                     else:
                         st.info("Tidak ada data untuk wilayah yang dipilih.")
                 else:
@@ -966,7 +901,7 @@ else:
                     row = df_display[df_display['nama_kabupaten'] == selected_wilayah].iloc[0]
                     kat = row['Prediksi_Kategori']
                     risk = row['Risk_Index']
-                    color_kat = {"Tinggi":"#ef4444","Sedang":"#f5a623","Rendah":"#22d47a"}.get(kat,"#94a3b8")
+                    color_kat = COLOR_MAP.get(kat, "#94a3b8")
                     glow_kat = {"Tinggi":"rgba(239,68,68,0.15)","Sedang":"rgba(245,166,35,0.12)","Rendah":"rgba(34,212,122,0.12)"}.get(kat,"rgba(148,163,184,0.08)")
 
                     st.markdown(f"""
@@ -983,8 +918,7 @@ else:
                     </div>
                     """, unsafe_allow_html=True)
 
-                    inp = row.to_dict()
-                    shap_dict = get_shap_values(inp, pred_class=int(row['pred_class']))
+                    shap_dict = get_shap_values(row.to_dict(), pred_class=int(row['pred_class']))
                     feature_names_display = {
                         "basic_service_index": "Indeks Pelayanan Dasar",
                         "faskes_ratio": "Rasio Fasilitas Kesehatan",
@@ -993,9 +927,7 @@ else:
                         "kepadatan_penduduk": "Kepadatan Penduduk"
                     }
                     total_abs = sum(abs(v) for v in shap_dict.values()) or 1
-                    st.markdown("""
-                    <div style="font-size:0.85rem; font-weight:600; color:var(--text-2); letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">📊 Faktor Risiko (SHAP)</div>
-                    """, unsafe_allow_html=True)
+                    st.markdown('<div style="font-size:0.85rem; font-weight:600; color:var(--text-2); letter-spacing:1px; text-transform:uppercase; margin-bottom:10px;">📊 Faktor Risiko (SHAP)</div>', unsafe_allow_html=True)
                     for feat, shap_val in sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True):
                         pct = (abs(shap_val) / total_abs) * 100
                         icon = "🔴" if shap_val > 0 else "🟢"
@@ -1004,7 +936,7 @@ else:
                         st.markdown(f"""
                         <div style="margin-bottom:8px; background:#162032; border-radius:8px; padding:10px 14px; border-left:4px solid {warna}; display:flex; justify-content:space-between; align-items:center;">
                             <span style="font-size:0.9rem; font-weight:500; color:var(--text-1);">{icon} {feature_names_display[feat]}</span>
-                            <span style="color:{warna}; font-size:0.85rem; font-weight:700; font-family:var(--mono);">{arah} · {pct:.1f}%</span>
+                            <span style="color:{warna}; font-size:0.85rem; font-weight:700;">{arah} · {pct:.1f}%</span>
                         </div>
                         """, unsafe_allow_html=True)
                 else:
@@ -1020,43 +952,30 @@ else:
                         for i, (_, row) in enumerate(top5.iterrows(), 1):
                             kat = row['Prediksi_Kategori']
                             risk = row['Risk_Index']
-                            if kat == 'Tinggi':
-                                badge_color = '#ef4444'
-                                bg_badge = 'rgba(239,68,68,0.15)'
-                            elif kat == 'Sedang':
-                                badge_color = '#f5a623'
-                                bg_badge = 'rgba(245,166,35,0.15)'
-                            else:
-                                badge_color = '#22d47a'
-                                bg_badge = 'rgba(34,212,122,0.15)'
+                            bc = COLOR_MAP.get(kat, "#94a3b8")
+                            bg = {"Tinggi":"rgba(239,68,68,0.15)","Sedang":"rgba(245,166,35,0.15)","Rendah":"rgba(34,212,122,0.15)"}.get(kat,"rgba(148,163,184,0.1)")
                             st.markdown(f"""
-                            <div style="display:flex; align-items:center; padding:10px 12px; margin-bottom:6px; background:rgba(255,255,255,0.03); border-radius:10px; transition:0.2s;">
+                            <div style="display:flex; align-items:center; padding:10px 12px; margin-bottom:6px; background:rgba(255,255,255,0.03); border-radius:10px;">
                                 <div style="width:28px; height:28px; border-radius:50%; background:rgba(255,255,255,0.06); display:flex; align-items:center; justify-content:center; font-weight:600; font-size:0.85rem; color:#94a3b8; margin-right:12px;">{i}</div>
                                 <div style="flex:1; font-size:1.0rem; font-weight:500; color:#f0f4ff;">{row['nama_kabupaten']}</div>
                                 <div style="display:flex; align-items:center; gap:14px;">
-                                    <span style="font-size:0.75rem; font-weight:600; color:{badge_color}; background:{bg_badge}; padding:2px 12px; border-radius:20px;">{kat}</span>
+                                    <span style="font-size:0.75rem; font-weight:600; color:{bc}; background:{bg}; padding:2px 12px; border-radius:20px;">{kat}</span>
                                     <span style="font-size:1.1rem; font-weight:700; color:#f97316; min-width:44px; text-align:right;">{risk:.1f}</span>
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
-                    else:
-                        st.info("Belum ada data.")
                     st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("---")
             st.subheader("📋 Tabel Hasil Prediksi (Semua Tahun)")
             st.caption("Menampilkan seluruh data dari semua tahun yang diupload.")
 
-            if selected_wilayah != "Semua Wilayah":
-                df_tampil = df_final[df_final['nama_kabupaten'] == selected_wilayah].copy()
-            else:
-                df_tampil = df_final.copy()
+            df_tampil = (df_final[df_final['nama_kabupaten'] == selected_wilayah].copy()
+                         if selected_wilayah != "Semua Wilayah" else df_final.copy())
 
             if not df_tampil.empty:
-                cols_show = ['nama_kabupaten', 'tahun', 'Prediksi_Kategori', 'Risk_Index', 'Prob_Rendah', 'Prob_Sedang', 'Prob_Tinggi']
-                cols_show = [c for c in cols_show if c in df_tampil.columns]
+                cols_show = [c for c in ['nama_kabupaten', 'tahun', 'Prediksi_Kategori', 'Risk_Index', 'Prob_Rendah', 'Prob_Sedang', 'Prob_Tinggi'] if c in df_tampil.columns]
                 df_show = df_tampil[cols_show].copy()
-
                 for col in ['Prob_Rendah','Prob_Sedang','Prob_Tinggi']:
                     if col in df_show.columns:
                         df_show[col] = df_show[col].apply(lambda x: f"{x*100:.1f}%")
@@ -1064,12 +983,9 @@ else:
                     df_show['Risk_Index'] = df_show['Risk_Index'].apply(lambda x: f"{x:.1f}")
 
                 def color_risk(val):
-                    if val == 'Tinggi':
-                        return 'background-color: rgba(239,68,68,0.15)'
-                    elif val == 'Sedang':
-                        return 'background-color: rgba(245,166,35,0.15)'
-                    elif val == 'Rendah':
-                        return 'background-color: rgba(34,212,122,0.15)'
+                    if val == 'Tinggi': return 'background-color: rgba(239,68,68,0.15)'
+                    if val == 'Sedang': return 'background-color: rgba(245,166,35,0.15)'
+                    if val == 'Rendah': return 'background-color: rgba(34,212,122,0.15)'
                     return ''
 
                 try:
@@ -1082,22 +998,20 @@ else:
                                                        ('font-size', '0.75rem'), ('padding', '8px 10px'),
                                                        ('text-align', 'left'), ('font-weight', '600')]},
                     {'selector': 'tbody tr:nth-child(even)', 'props': [('background-color', 'rgba(255,255,255,0.03)')]},
-                    {'selector': 'tbody tr:hover', 'props': [('background-color', 'rgba(255,255,255,0.07)')]},
                     {'selector': 'td', 'props': [('padding', '8px 10px'), ('font-size', '0.8rem'),
                                                  ('border-bottom', '1px solid rgba(255,255,255,0.05)')]},
                 ])
-
                 st.dataframe(styled, use_container_width=True, height=400, hide_index=True)
             else:
                 st.info("Tidak ada data untuk ditampilkan.")
 
             st.markdown("---")
             st.success("✅ **Model XGBoost berhasil dijalankan dan memproses seluruh data yang diupload.**")
-            st.caption(f"📌 **Threshold:** t_high = {T_HIGH:.2f}, t0 = {T0:.2f}  |  Fitur: BSI, FR, PD, Pengeluaran, Kepadatan | Algoritma: XGBoost (multi-class)")
+            st.caption(f"📌 **Threshold:** t_high = {T_HIGH:.2f}, t0 = {T0:.2f}")
 
             st.markdown("---")
             st.subheader("📊 Evaluasi Model XGBoost pada Data Uji (2024)")
-            st.caption("Metrik berikut dihitung dari data uji tahun 2024 (27 kabupaten/kota) yang tidak pernah dilihat model saat training.")
+            st.caption("Metrik dihitung dari data uji tahun 2024 (27 kabupaten/kota).")
 
             left_col, right_col = st.columns([1, 1.8], gap="large")
             with left_col:
@@ -1106,41 +1020,29 @@ else:
                 st.metric("Recall (Makro)", f"{metrics['recall_macro']*100:.1f}%")
                 st.metric("F1-Score (Makro)", f"{metrics['f1_macro']*100:.1f}%")
             with right_col:
-                cm = metrics['confusion_matrix']
                 fig_cm = px.imshow(
-                    cm,
-                    text_auto=True,
-                    color_continuous_scale='Blues',
+                    metrics['confusion_matrix'], text_auto=True, color_continuous_scale='Blues',
                     labels=dict(x="Prediksi", y="Aktual", color="Jumlah"),
-                    x=['Rendah', 'Sedang', 'Tinggi'],
-                    y=['Rendah', 'Sedang', 'Tinggi'],
+                    x=['Rendah', 'Sedang', 'Tinggi'], y=['Rendah', 'Sedang', 'Tinggi'],
                     aspect='square'
                 )
                 fig_cm.update_layout(
-                    height=400,
-                    width=400,
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#f0f4ff", size=14),
-                    xaxis=dict(title_font=dict(size=14), tickfont=dict(size=12)),
-                    yaxis=dict(title_font=dict(size=14), tickfont=dict(size=12))
+                    height=400, width=400, paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#f0f4ff", size=14)
                 )
-                fig_cm.update_traces(
-                    textfont=dict(color="white", size=16),
-                    hovertemplate='Aktual: %{y}<br>Prediksi: %{x}<br>Jumlah: %{z}<extra></extra>'
-                )
+                fig_cm.update_traces(textfont=dict(color="white", size=16))
                 st.plotly_chart(fig_cm, use_container_width=True)
 
-            st.success("✅ **Kesimpulan:** Model XGBoost menunjukkan performa yang baik dengan akurasi > 80% dan F1-score makro > 80%.")
+            st.success("✅ **Kesimpulan:** Model XGBoost menunjukkan performa baik dengan akurasi > 80%.")
 
             csv = df_final.to_csv(index=False).encode('utf-8')
-            st.download_button("⬇️ Download CSV Hasil Prediksi (Semua Wilayah & Tahun)", data=csv, file_name="hasil_prediksi_tbc.csv", mime="text/csv")
-
+            st.download_button("⬇️ Download CSV Hasil Prediksi", data=csv,
+                               file_name="hasil_prediksi_tbc.csv", mime="text/csv")
         else:
             st.error("❌ Gagal memproses data. Periksa kembali file-file yang diupload.")
 
 st.markdown(f"""
 <div class="footer">
-    SIG &amp; ML TBC Jabar · XGBoost · 
-    Threshold: t_high={T_HIGH:.2f} · t0={T0:.2f} · © 2026
+    SIG &amp; ML TBC Jabar · XGBoost · Threshold: t_high={T_HIGH:.2f} · t0={T0:.2f} · © 2026
 </div>
 """, unsafe_allow_html=True)
